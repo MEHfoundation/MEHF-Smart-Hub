@@ -1,3 +1,14 @@
+name: Build MEHF Smart Hub Android APK
+
+on:
+push:
+branches: [ "main", "master" ]
+workflow_dispatch:
+
+jobs:
+build-android-apk:
+runs-on: ubuntu-latest
+
 steps:
   - name: 📥 Checkout Repository Code
     uses: actions/checkout@v4
@@ -11,7 +22,6 @@ steps:
   - name: 🤖 Setup Android SDK
     uses: android-actions/setup-android@v3
 
-  # STREAMING_CHUNK:Generating complete Android Gradle project structure dynamically...
   - name: 🛠️ Generate Android Project Structure & Gradle Wrapper
     run: |
       mkdir -p app/src/main/java/in/mehf/smarthub
@@ -70,7 +80,6 @@ steps:
       </resources>
       EOF
 
-  # STREAMING_CHUNK:Building the APK and uploading it as a downloadable artifact...
   - name: 🚀 Build Debug APK via Gradle
     run: |
       gradle wrapper --gradle-version 8.4
