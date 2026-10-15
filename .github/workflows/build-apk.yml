@@ -27,6 +27,7 @@ jobs:
           mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
           
           echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
           echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
           echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
 
@@ -49,6 +50,9 @@ jobs:
           if [ -f "chat.html" ]; then
             cp chat.html app/src/main/assets/chat.html
           fi
+
+          # Create local.properties to explicitly point Android SDK path for Gradle
+          echo "sdk.dir=$HOME/android-sdk" > local.properties
 
           cat << 'EOF' > settings.gradle
           pluginManagement {
