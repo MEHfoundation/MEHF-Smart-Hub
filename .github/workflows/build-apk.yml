@@ -1,5 +1,4 @@
 name: Build MEHF Smart Hub Android APK
-
 on:
 push:
 branches: [ "main", "master" ]
