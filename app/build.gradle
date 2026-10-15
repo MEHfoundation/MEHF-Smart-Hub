@@ -1,0 +1,28 @@
+defaultConfig {
+    applicationId "in.mehf.smarthub"
+    minSdk 23        // Purane Android 6.0+ mobile me bhi chalega
+    targetSdk 34     // Naye Android 14/15 mobile me bhi chalega
+    versionCode 1
+    versionName "1.0.0"
+}
+
+buildTypes {
+    release {
+        minifyEnabled false
+    }
+    debug {
+        debuggable true
+    }
+}
+
+compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+}
+
+
+}
+
+dependencies {
+// Pure lightweight native Android WebRTC + SMS wrapper (Zero bloat, ~2 MB APK size)
+}
