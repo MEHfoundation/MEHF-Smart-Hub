@@ -1,4 +1,5 @@
 name: Build MEHF Smart Hub Android APK
+
 on:
 push:
 branches: [ "main", "master" ]
@@ -59,11 +60,11 @@ steps:
       EOF
 
       # Create root build.gradle
-      cat << 'EOF' > build.gradle
+      cat << 'GradleEOF' > build.gradle
       plugins {
           id 'com.android.application' version '8.2.2' apply false
       }
-      EOF
+      GradleEOF
 
       # Create gradle.properties
       cat << 'EOF' > gradle.properties
