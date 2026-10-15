@@ -1,4 +1,4 @@
-name: Build MEHF Smart Hub Android APK
+name: Build Meh foundation Android APK
 
 on:
   push:
@@ -10,22 +10,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout Repository Code
+      - name: Checkout Repository Code
         uses: actions/checkout@v4
 
-      - name: ☕ Set up JDK 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 🤖 Manual Android SDK & Build Tools Setup
+      - name: Manual Android SDK & Build Tools Setup
         run: |
           mkdir -p $HOME/android-sdk/cmdline-tools
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
           unzip -q tools.zip -d $HOME/android-sdk/cmdline-tools
           mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
-          
+
           echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
           echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
@@ -35,10 +35,16 @@ jobs:
           yes | $SDKMGR --licenses || true
           $SDKMGR "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: 🛠️ Generate Android Project Structure & Gradle Wrapper
+      - name: Generate Android Project Structure, Custom Icon & Gradle Wrapper
         run: |
           mkdir -p app/src/main/java/in/mehf/smarthub
           mkdir -p app/src/main/res/values
+          mkdir -p app/src/main/res/drawable
+          mkdir -p app/src/main/res/mipmap-mdpi
+          mkdir -p app/src/main/res/mipmap-hdpi
+          mkdir -p app/src/main/res/mipmap-xhdpi
+          mkdir -p app/src/main/res/mipmap-xxhdpi
+          mkdir -p app/src/main/res/mipmap-xxxhdpi
           mkdir -p app/src/main/assets
 
           if [ -f "MainActivity.java" ]; then
@@ -51,7 +57,40 @@ jobs:
             cp chat.html app/src/main/assets/chat.html
           fi
 
-          # Create local.properties to explicitly point Android SDK path for Gradle
+          # Check if user uploaded launchericon-72x72.png or icon.png
+          ICON_FILE=""
+          if [ -f "launchericon-72x72.png" ]; then
+            ICON_FILE="launchericon-72x72.png"
+          elif [ -f "icon.png" ]; then
+            ICON_FILE="icon.png"
+          elif [ -f "ic_launcher.png" ]; then
+            ICON_FILE="ic_launcher.png"
+          fi
+
+          if [ -n "$ICON_FILE" ]; then
+            cp "$ICON_FILE" app/src/main/res/drawable/ic_launcher.png
+            cp "$ICON_FILE" app/src/main/res/mipmap-mdpi/ic_launcher.png
+            cp "$ICON_FILE" app/src/main/res/mipmap-hdpi/ic_launcher.png
+            cp "$ICON_FILE" app/src/main/res/mipmap-xhdpi/ic_launcher.png
+            cp "$ICON_FILE" app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+            cp "$ICON_FILE" app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+          else
+            # Fallback Golden Seal Vector Drawable matching launchericon-72x72.png
+            cat << 'EOF' > app/src/main/res/drawable/ic_launcher.xml
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#C67D0A" android:pathData="M0,0h108v108h-108z"/>
+              <path android:fillColor="#00000000" android:strokeColor="#3E2000" android:strokeWidth="4" android:pathData="M54,54m-44,0a44,44 0,1 1,88 0a44,44 0,1 1,-88 0"/>
+              <path android:fillColor="#00000000" android:strokeColor="#3E2000" android:strokeWidth="2" android:pathData="M54,54m-32,0a32,32 0,1 1,64 0a32,32 0,1 1,-64 0"/>
+              <path android:fillColor="#3E2000" android:pathData="M36,48 L54,42 L72,48 L72,56 L54,50 L36,56 Z"/>
+              <path android:fillColor="#3E2000" android:pathData="M52,24 h4 v22 h-4 z"/>
+          </vector>
+          EOF
+          fi
+
           echo "sdk.dir=$HOME/android-sdk" > local.properties
 
           cat << 'EOF' > settings.gradle
@@ -69,7 +108,7 @@ jobs:
                   mavenCentral()
               }
           }
-          rootProject.name = "MEHFSmartHub"
+          rootProject.name = "MehFoundation"
           include ':app'
           EOF
 
@@ -87,18 +126,18 @@ jobs:
 
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
-              <string name="app_name">MEHF Smart Hub</string>
+              <string name="app_name">Meh foundation</string>
           </resources>
           EOF
 
-      - name: 🚀 Build Debug APK via Gradle
+      - name: Build Debug APK via Gradle
         run: |
           gradle wrapper --gradle-version 8.4
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: 📦 Upload Ready-to-Install APK
+      - name: Upload Ready-to-Install APK
         uses: actions/upload-artifact@v4
         with:
-          name: MEHF-Smart-Hub-APK
+          name: Meh-foundation-APK
           path: app/build/outputs/apk/debug/app-debug.apk
