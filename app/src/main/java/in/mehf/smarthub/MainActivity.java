@@ -41,12 +41,10 @@ public class MainActivity extends Activity {
     private Ringtone activeRingtone;
     private Vibrator vibrator;
     private TextToSpeech tts;
-    private boolean ttsReady = false;
-    private String lastRingingCallRoom = "";
+    private String lastRingingCallSignature = "";
 
-    // Start directly on Login/Smart Hub Entry (Redirects to Dashboard after login)
-    private static final String LIVE_MEHF_START_URL = "https://mehf.in/chat.html";
-    private static final String LIVE_MEHF_CHAT_URL = "https://mehf.in/chat.html";
+    // Starts directly on the Unified Login + Main Dashboard + Calling Hub
+    private static final String LIVE_MEHF_HUB_URL = "https://mehf.in/chat.html";
     private static final String CALL_CHANNEL_ID = "mehf_incoming_calls_channel";
     private static final String ALERT_CHANNEL_ID = "mehf_activity_alerts_channel";
 
@@ -76,15 +74,9 @@ public class MainActivity extends Activity {
         createNotificationChannels();
         requestRequiredRuntimePermissions();
 
-        // Initialize Hindi/Indian English Voice Announcement Engine (TTS)
-        tts = new TextToSpeech(getApplicationContext(), status -> {
+        tts = new TextToSpeech(this, status -> {
             if (status == TextToSpeech.SUCCESS) {
-                int res = tts.setLanguage(new Locale("hi", "IN"));
-                if (res == TextToSpeech.LANG_MISSING_DATA || res == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    tts.setLanguage(Locale.US);
-                }
-                tts.setSpeechRate(0.95f);
-                ttsReady = true;
+                tts.setLanguage(new Locale("hi", "IN"));
             }
         });
 
@@ -98,13 +90,11 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
-        // Mobile-friendly responsive viewport settings (Fixes giant desktop zoom on mobile)
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
-        settings.setSupportZoom(true);
+        settings.setSupportZoom(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setTextZoom(100);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
@@ -120,13 +110,12 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
-                injectMobileResponsiveAndAuthGuardScript(view);
-                injectGlobalRealtimeMonitorScript(view);
+                injectMobileResponsiveAndRealtimeMonitor(view);
             }
 
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                if (failingUrl != null && failingUrl.startsWith("https://mehf.in")) {
+                if (failingUrl != null && failingUrl.equals(LIVE_MEHF_HUB_URL)) {
                     view.loadUrl("file:///android_asset/chat.html");
                 }
             }
@@ -156,110 +145,32 @@ public class MainActivity extends Activity {
                     DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
                     if (dm != null) dm.enqueue(request);
                 } catch (Exception ignored) {
-                    Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                    startActivity(i);
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
                 }
             }
         });
 
-        handleLaunchIntent(getIntent());
+        webView.loadUrl(LIVE_MEHF_HUB_URL);
     }
 
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        handleLaunchIntent(intent);
-    }
-
-    // FIXED: Prevents infinite reload loop when an incoming call brings Activity to front!
-    private void handleLaunchIntent(Intent intent) {
-        String currentUrl = webView.getUrl();
-        if (intent != null && intent.getStringExtra("target_url") != null) {
-            String target = intent.getStringExtra("target_url");
-            intent.removeExtra("target_url");
-            // Only load if we are NOT already on chat.html (Stops refreshing while call is ringing!)
-            if (currentUrl == null || !currentUrl.contains("chat.html")) {
-                webView.loadUrl(target);
-            }
-        } else if (currentUrl == null) {
-            webView.loadUrl(LIVE_MEHF_START_URL);
-        }
-    }
-
-    private void speakAnnouncement(String text) {
-        try {
-            if (tts != null && ttsReady && text != null && !text.isEmpty()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    tts.speak(text, TextToSpeech.QUEUE_ADD, null, "mehf_tts_" + System.currentTimeMillis());
-                } else {
-                    tts.speak(text, TextToSpeech.QUEUE_ADD, null);
-                }
-            }
-        } catch (Exception ignored) {}
-    }
-
-    // 1. Enforces Mobile-Friendly UI on ALL website pages + Syncs Login across Dashboard & Chat + Blocks unauthenticated access
-    private void injectMobileResponsiveAndAuthGuardScript(WebView view) {
+    // Ensures every page on mehf.in is mobile-friendly and monitors calls without infinite refresh loops
+    private void injectMobileResponsiveAndRealtimeMonitor(WebView view) {
         String js = "(function() {" +
-                // A. Ensure proper mobile viewport meta tag on every page
-                "var vp = document.querySelector('meta[name=\"viewport\"]');" +
-                "if (!vp) {" +
-                "  vp = document.createElement('meta');" +
-                "  vp.name = 'viewport';" +
-                "  document.head.appendChild(vp);" +
-                "}" +
-                "vp.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';" +
-                // B. Inject Global Mobile-Friendly CSS fix so tables/dashboards never overflow horizontally
-                "if (!document.getElementById('mehf-mobile-responsive-fix')) {" +
-                "  var st = document.createElement('style');" +
-                "  st.id = 'mehf-mobile-responsive-fix';" +
-                "  st.innerHTML = 'html, body { max-width: 100vw !important; overflow-x: hidden !important; } " +
-                "  img, video, canvas, iframe { max-width: 100% !important; height: auto; } " +
-                "  @media (max-width: 768px) { " +
-                "    table { display: block; width: 100% !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch; } " +
-                "    .container, .main-content, .dashboard-container, .wrapper, .content { width: 100% !important; max-width: 100vw !important; padding-left: 10px !important; padding-right: 10px !important; margin-left: 0 !important; box-sizing: border-box !important; } " +
-                "  }';" +
-                "  document.head.appendChild(st);" +
-                "}" +
-                // C. Universal Session Sync: Sync login keys between Dashboard pages and chat.html
                 "try {" +
-                "  var activeId = localStorage.getItem('mehf_active_account_doc_id_v2') || localStorage.getItem('mehf_user_doc_id') || localStorage.getItem('userId') || localStorage.getItem('username') || sessionStorage.getItem('mehf_active_doc_id');" +
-                "  var activeRole = localStorage.getItem('mehf_user_role') || localStorage.getItem('role') || localStorage.getItem('userRole') || sessionStorage.getItem('mehf_active_role');" +
-                "  if (!activeId) {" +
-                "    var rawUser = localStorage.getItem('currentUser') || localStorage.getItem('loggedInUser') || localStorage.getItem('user') || sessionStorage.getItem('currentUser');" +
-                "    if (rawUser) {" +
-                "      try {" +
-                "        var parsed = JSON.parse(rawUser);" +
-                "        activeId = parsed.docId || parsed.id || parsed.uid || parsed.username;" +
-                "        activeRole = activeRole || parsed.role;" +
-                "      } catch(e){}" +
+                "  if (!document.getElementById('mehfGlobalMobileViewportFix')) {" +
+                "    var meta = document.querySelector('meta[name=\"viewport\"]');" +
+                "    if (!meta && document.head) {" +
+                "      meta = document.createElement('meta');" +
+                "      meta.name = 'viewport';" +
+                "      meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';" +
+                "      document.head.appendChild(meta);" +
                 "    }" +
-                "  }" +
-                "  if (activeId) {" +
-                "    localStorage.setItem('mehf_active_account_doc_id_v2', activeId);" +
-                "    localStorage.setItem('mehf_user_doc_id', activeId);" +
-                "    localStorage.setItem('username', activeId);" +
-                "    sessionStorage.setItem('mehf_active_doc_id', activeId);" +
-                "    if (activeRole) {" +
-                "      localStorage.setItem('mehf_user_role', activeRole);" +
-                "      localStorage.setItem('role', activeRole);" +
-                "      sessionStorage.setItem('mehf_active_role', activeRole);" +
-                "    }" +
-                "  } else {" +
-                "    var path = window.location.pathname.toLowerCase();" +
-                "    if (path.indexOf('chat.html') === -1 && path.indexOf('login') === -1) {" +
-                "      window.location.replace('https://mehf.in/chat.html');" +
-                "    }" +
+                "    var st = document.createElement('style');" +
+                "    st.id = 'mehfGlobalMobileViewportFix';" +
+                "    st.textContent = 'html, body { max-width: 100vw !important; overflow-x: hidden !important; } table { display: block; width: 100% !important; overflow-x: auto !important; }';" +
+                "    if (document.head) document.head.appendChild(st);" +
                 "  }" +
                 "} catch(e){}" +
-                "})();";
-        view.evaluateJavascript(js, null);
-    }
-
-    // 2. Global Real-Time Monitor on ANY page for Attendance, Fee, Result, Admit Card & Calls
-    private void injectGlobalRealtimeMonitorScript(WebView view) {
-        String js = "(function() {" +
                 "if (window.__mehfGlobalNativeMonitorActive) return;" +
                 "window.__mehfGlobalNativeMonitorActive = true;" +
                 "if (window.location.pathname.indexOf('chat.html') !== -1) return;" +
@@ -271,36 +182,17 @@ public class MainActivity extends Activity {
                 "    try { accs = JSON.parse(localStorage.getItem('mehf_persistent_accounts_v2') || '[]'); } catch(e){}" +
                 "    const singleId = localStorage.getItem('mehf_active_account_doc_id_v2') || localStorage.getItem('mehf_user_doc_id');" +
                 "    if (singleId && !accs.some(a => a.docId === singleId)) accs.push({ docId: singleId, name: 'User' });" +
+                "    let redirectedRoom = null;" +
                 "    accs.forEach(acc => {" +
-                "      let prev = null;" +
-                "      onSnapshot(doc(mod.db, 'users', acc.docId), (snap) => {" +
-                "        if (!snap.exists()) return;" +
-                "        const cur = snap.data();" +
-                "        if (prev && window.AndroidAppBridge) {" +
-                "          if (cur.attendanceStatus !== prev.attendanceStatus || cur.lastAttendanceDate !== prev.lastAttendanceDate) {" +
-                "            window.AndroidAppBridge.showSystemNotification((cur.name || acc.docId) + ' की हाजिरी अपडेट हुई है', 'आज की स्थिति: ' + (cur.attendanceStatus || 'Updated'));" +
-                "          }" +
-                "          if (cur.paidFee !== prev.paidFee || cur.dueFee !== prev.dueFee) {" +
-                "            window.AndroidAppBridge.showSystemNotification((cur.name || acc.docId) + ' का फीस रिकॉर्ड अपडेट हुआ है', 'कृपया डैशबोर्ड में रसीद देखें');" +
-                "          }" +
-                "          if (cur.resultPublished !== prev.resultPublished || cur.marksUpdated !== prev.marksUpdated) {" +
-                "            window.AndroidAppBridge.showSystemNotification((cur.name || acc.docId) + ' का परीक्षा परिणाम जारी हो गया है', 'अभी अपना रिजल्ट देखें');" +
-                "          }" +
-                "          if (cur.admitCardGenerated !== prev.admitCardGenerated || cur.admitCardUrl !== prev.admitCardUrl) {" +
-                "            window.AndroidAppBridge.showSystemNotification((cur.name || acc.docId) + ' का एडमिट कार्ड जारी हो गया है', 'अभी डाउनलोड करें');" +
-                "          }" +
-                "        }" +
-                "        prev = Object.assign({}, cur);" +
-                "      });" +
-                "      let lastHandledRoom = '';" +
                 "      onSnapshot(doc(mod.db, 'calls', acc.docId), (cSnap) => {" +
                 "        const c = cSnap.data();" +
-                "        if (c && (c.type === 'call_offer' || c.type === 'conference_invite') && c.roomName !== lastHandledRoom && (Date.now() - (c.timestamp || 0) < 45000)) {" +
-                "          lastHandledRoom = c.roomName || 'room';" +
+                "        if (c && (c.type === 'call_offer' || c.type === 'conference_invite') && (Date.now() - (c.timestamp || 0) < 45000)) {" +
+                "          if (redirectedRoom === c.roomName) return;" +
+                "          redirectedRoom = c.roomName;" +
                 "          if (window.AndroidAppBridge) {" +
-                "            window.AndroidAppBridge.triggerIncomingCallRing((c.callerName || c.callerId) + ' का कॉल आ रहा है', 'कॉल उठाने के लिए टैप करें');" +
+                "            window.AndroidAppBridge.triggerIncomingCallRing((c.callerName || c.callerId), 'कृपया कॉल रिसीव करें');" +
                 "          }" +
-                "          window.location.href = 'https://mehf.in/chat.html';" +
+                "          window.location.href = '/chat.html';" +
                 "        }" +
                 "      });" +
                 "    });" +
@@ -320,7 +212,6 @@ public class MainActivity extends Activity {
                     "Incoming Calls & Live Conferences",
                     NotificationManager.IMPORTANCE_HIGH
             );
-            callChannel.setDescription("Rings & Speaks even when screen is locked");
             callChannel.enableVibration(true);
             callChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(callChannel);
@@ -359,19 +250,14 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void speakVoiceAlert(String speechText) {
-            runOnUiThread(() -> speakAnnouncement(speechText));
-        }
-
-        @JavascriptInterface
         public void triggerIncomingCallRing(String callerTitle, String subtitle) {
             runOnUiThread(() -> {
                 try {
-                    // Prevent duplicate re-triggering for the same call title while already ringing
-                    if (activeRingtone != null && activeRingtone.isPlaying() && callerTitle != null && callerTitle.equals(lastRingingCallRoom)) {
+                    String sig = callerTitle + "_" + (System.currentTimeMillis() / 15000);
+                    if (sig.equals(lastRingingCallSignature)) {
                         return;
                     }
-                    lastRingingCallRoom = callerTitle != null ? callerTitle : "";
+                    lastRingingCallSignature = sig;
 
                     PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
                     if (pm != null) {
@@ -379,15 +265,14 @@ public class MainActivity extends Activity {
                                 PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE,
                                 "MehFoundation::IncomingCallScreenWake"
                         );
-                        screenLock.acquire(35000);
+                        screenLock.acquire(40000);
                     }
 
-                    // Bring Activity to front WITHOUT passing target_url if already on chat.html (Prevents Page Refresh Loop!)
-                    Intent bringToFront = new Intent(MainActivity.this, MainActivity.class);
-                    String curUrl = webView != null ? webView.getUrl() : null;
-                    if (curUrl == null || !curUrl.contains("chat.html")) {
-                        bringToFront.putExtra("target_url", LIVE_MEHF_CHAT_URL);
+                    if (tts != null) {
+                        tts.speak("ध्यान दें, मे फाउंडेशन ऐप पर " + callerTitle + " आ रही है, कृपया कॉल रिसीव करें", TextToSpeech.QUEUE_FLUSH, null, "call_tts");
                     }
+
+                    Intent bringToFront = new Intent(MainActivity.this, MainActivity.class);
                     bringToFront.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                     startActivity(bringToFront);
 
@@ -404,10 +289,7 @@ public class MainActivity extends Activity {
                         vibrator.vibrate(pattern, 0);
                     }
 
-                    // Announce Caller Name via Voice TTS
-                    speakAnnouncement("मेह फाउंडेशन अलर्ट: " + callerTitle + "। कृपया कॉल रिसीव करें।");
-
-                    showHighPriorityNotification(callerTitle, subtitle, 9001, CALL_CHANNEL_ID, null);
+                    showHighPriorityNotification(callerTitle, subtitle, 9001, CALL_CHANNEL_ID);
                 } catch (Exception ignored) {}
             });
         }
@@ -416,7 +298,7 @@ public class MainActivity extends Activity {
         public void stopIncomingCallRing() {
             runOnUiThread(() -> {
                 try {
-                    lastRingingCallRoom = "";
+                    lastRingingCallSignature = "";
                     if (activeRingtone != null && activeRingtone.isPlaying()) {
                         activeRingtone.stop();
                     }
@@ -435,22 +317,21 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void showSystemNotification(String title, String message) {
             runOnUiThread(() -> {
+                if (tts != null) {
+                    tts.speak("मे फाउंडेशन नया अपडेट: " + title, TextToSpeech.QUEUE_ADD, null, "alert_tts");
+                }
                 int id = (int) (System.currentTimeMillis() % 100000);
-                speakAnnouncement("मेह फाउंडेशन सूचना: " + title + "। " + message);
-                showHighPriorityNotification(title, message, id, ALERT_CHANNEL_ID, null);
+                showHighPriorityNotification(title, message, id, ALERT_CHANNEL_ID);
             });
         }
     }
 
-    private void showHighPriorityNotification(String title, String body, int notifId, String channelId, String targetUrl) {
+    private void showHighPriorityNotification(String title, String body, int notifId, String channelId) {
         try {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return;
 
             Intent intent = new Intent(this, MainActivity.class);
-            if (targetUrl != null) {
-                intent.putExtra("target_url", targetUrl);
-            }
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
