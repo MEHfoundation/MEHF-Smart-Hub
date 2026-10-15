@@ -1,3 +1,11 @@
+/* STREAMING_CHUNK:Configuring Android SDK versions (Android 6.0 to Android 14+)... */
+plugins {
+id 'com.android.application'
+}
+
+android {
+namespace 'in.mehf.smarthub'
+compileSdk 34
 defaultConfig {
     applicationId "in.mehf.smarthub"
     minSdk 23        // Purane Android 6.0+ mobile me bhi chalega
