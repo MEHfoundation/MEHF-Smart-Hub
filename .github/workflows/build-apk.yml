@@ -1,0 +1,84 @@
+steps:
+  - name: 📥 Checkout Repository Code
+    uses: actions/checkout@v4
+
+  - name: ☕ Set up JDK 17
+    uses: actions/setup-java@v4
+    with:
+      java-version: '17'
+      distribution: 'temurin'
+
+  - name: 🤖 Setup Android SDK
+    uses: android-actions/setup-android@v3
+
+  # STREAMING_CHUNK:Generating complete Android Gradle project structure dynamically...
+  - name: 🛠️ Generate Android Project Structure & Gradle Wrapper
+    run: |
+      mkdir -p app/src/main/java/in/mehf/smarthub
+      mkdir -p app/src/main/res/values
+      mkdir -p app/src/main/assets
+
+      # Copy files if uploaded at root or in folders
+      if [ -f "MainActivity.java" ]; then
+        cp MainActivity.java app/src/main/java/in/mehf/smarthub/MainActivity.java
+      fi
+      if [ -f "AndroidManifest.xml" ]; then
+        cp AndroidManifest.xml app/src/main/AndroidManifest.xml
+      fi
+      if [ -f "chat.html" ]; then
+        cp chat.html app/src/main/assets/chat.html
+      fi
+
+      # Create settings.gradle
+      cat << 'EOF' > settings.gradle
+      pluginManagement {
+          repositories {
+              google()
+              mavenCentral()
+              gradlePluginPortal()
+          }
+      }
+      dependencyResolutionManagement {
+          repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+          repositories {
+              google()
+              mavenCentral()
+          }
+      }
+      rootProject.name = "MEHFSmartHub"
+      include ':app'
+      EOF
+
+      # Create root build.gradle
+      cat << 'EOF' > build.gradle
+      plugins {
+          id 'com.android.application' version '8.2.2' apply false
+      }
+      EOF
+
+      # Create gradle.properties
+      cat << 'EOF' > gradle.properties
+      org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+      android.useAndroidX=true
+      android.nonTransitiveRClass=true
+      EOF
+
+      # Create strings.xml
+      cat << 'EOF' > app/src/main/res/values/strings.xml
+      <resources>
+          <string name="app_name">MEHF Smart Hub</string>
+      </resources>
+      EOF
+
+  # STREAMING_CHUNK:Building the APK and uploading it as a downloadable artifact...
+  - name: 🚀 Build Debug APK via Gradle
+    run: |
+      gradle wrapper --gradle-version 8.4
+      chmod +x gradlew
+      ./gradlew assembleDebug --no-daemon
+
+  - name: 📦 Upload Ready-to-Install APK
+    uses: actions/upload-artifact@v4
+    with:
+      name: MEHF-Smart-Hub-APK
+      path: app/build/outputs/apk/debug/app-debug.apk
