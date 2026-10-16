@@ -41,10 +41,9 @@ public class MainActivity extends Activity {
     private Ringtone activeRingtone;
     private Vibrator vibrator;
     private TextToSpeech tts;
-    private String lastRingingCallSignature = "";
 
-    // Starts directly on the Unified Login + Main Dashboard + Calling Hub
-    private static final String LIVE_MEHF_HUB_URL = "https://mehf.in/chat.html";
+    private static final String LIVE_MEHF_WEBSITE_URL = "https://mehf.in";
+    private static final String LIVE_MEHF_CHAT_URL = "https://mehf.in/chat.html";
     private static final String CALL_CHANNEL_ID = "mehf_incoming_calls_channel";
     private static final String ALERT_CHANNEL_ID = "mehf_activity_alerts_channel";
 
@@ -66,7 +65,7 @@ public class MainActivity extends Activity {
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (pm != null) {
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MehFoundation::BackgroundWakeLock");
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MehFoundation::BackgroundSmsAndCallWakeLock");
             wakeLock.acquire();
         }
 
@@ -110,12 +109,12 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
-                injectMobileResponsiveAndRealtimeMonitor(view);
+                injectGlobalRealtimeAndSmsGatewayMonitor(view);
             }
 
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                if (failingUrl != null && failingUrl.equals(LIVE_MEHF_HUB_URL)) {
+                if (failingUrl != null && failingUrl.equals(LIVE_MEHF_WEBSITE_URL)) {
                     view.loadUrl("file:///android_asset/chat.html");
                 }
             }
@@ -128,74 +127,95 @@ public class MainActivity extends Activity {
             }
         });
 
-        webView.setDownloadListener(new DownloadListener() {
-            @Override
-            public void onDownloadStart(String url, String userAgent, String contentDisposition, String mimeType, long contentLength) {
-                try {
-                    DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
-                    request.setMimeType(mimeType);
-                    String cookies = CookieManager.getInstance().getCookie(url);
-                    request.addRequestHeader("cookie", cookies);
-                    request.addRequestHeader("User-Agent", userAgent);
-                    request.setDescription("Downloading file from Meh foundation...");
-                    String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
-                    request.setTitle(fileName);
-                    request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
-                    request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
-                    DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-                    if (dm != null) dm.enqueue(request);
-                } catch (Exception ignored) {
-                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-                }
+        webView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+            try {
+                DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
+                request.setMimeType(mimeType);
+                String cookies = CookieManager.getInstance().getCookie(url);
+                request.addRequestHeader("cookie", cookies);
+                request.addRequestHeader("User-Agent", userAgent);
+                request.setDescription("Downloading file from Meh foundation...");
+                String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
+                request.setTitle(fileName);
+                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+                request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName);
+                DownloadManager dm = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
+                if (dm != null) dm.enqueue(request);
+            } catch (Exception ignored) {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
             }
         });
 
-        webView.loadUrl(LIVE_MEHF_HUB_URL);
+        handleLaunchIntent(getIntent());
     }
 
-    // Ensures every page on mehf.in is mobile-friendly and monitors calls without infinite refresh loops
-    private void injectMobileResponsiveAndRealtimeMonitor(WebView view) {
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleLaunchIntent(intent);
+    }
+
+    private void handleLaunchIntent(Intent intent) {
+        if (intent != null && intent.getStringExtra("target_url") != null) {
+            webView.loadUrl(intent.getStringExtra("target_url"));
+        } else if (webView.getUrl() == null) {
+            webView.loadUrl(LIVE_MEHF_WEBSITE_URL);
+        }
+    }
+
+    // Runs in background across ALL pages of mehf.in:
+    // 1. Dispatches pending SMS from `sms_queue` & `sms_logs` via SIM automatically for School/Admin
+    // 2. Monitors incoming calls & user updates (Attendance, Fee, Result, Admit Card)
+    private void injectGlobalRealtimeAndSmsGatewayMonitor(WebView view) {
         String js = "(function() {" +
-                "try {" +
-                "  if (!document.getElementById('mehfGlobalMobileViewportFix')) {" +
-                "    var meta = document.querySelector('meta[name=\"viewport\"]');" +
-                "    if (!meta && document.head) {" +
-                "      meta = document.createElement('meta');" +
-                "      meta.name = 'viewport';" +
-                "      meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';" +
-                "      document.head.appendChild(meta);" +
-                "    }" +
-                "    var st = document.createElement('style');" +
-                "    st.id = 'mehfGlobalMobileViewportFix';" +
-                "    st.textContent = 'html, body { max-width: 100vw !important; overflow-x: hidden !important; } table { display: block; width: 100% !important; overflow-x: auto !important; }';" +
-                "    if (document.head) document.head.appendChild(st);" +
-                "  }" +
-                "} catch(e){}" +
                 "if (window.__mehfGlobalNativeMonitorActive) return;" +
                 "window.__mehfGlobalNativeMonitorActive = true;" +
                 "if (window.location.pathname.indexOf('chat.html') !== -1) return;" +
                 "try {" +
                 "  import('/firebase-config.js').then(async (mod) => {" +
                 "    if (!mod || !mod.db) return;" +
-                "    const { doc, onSnapshot } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');" +
-                "    let accs = [];" +
-                "    try { accs = JSON.parse(localStorage.getItem('mehf_persistent_accounts_v2') || '[]'); } catch(e){}" +
-                "    const singleId = localStorage.getItem('mehf_active_account_doc_id_v2') || localStorage.getItem('mehf_user_doc_id');" +
-                "    if (singleId && !accs.some(a => a.docId === singleId)) accs.push({ docId: singleId, name: 'User' });" +
-                "    let redirectedRoom = null;" +
-                "    accs.forEach(acc => {" +
-                "      onSnapshot(doc(mod.db, 'calls', acc.docId), (cSnap) => {" +
+                "    const { doc, collection, onSnapshot, updateDoc } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');" +
+                "    const activeId = localStorage.getItem('mehf_active_account_doc_id_v2') || localStorage.getItem('mehf_user_doc_id') || localStorage.getItem('userDocId') || localStorage.getItem('username');" +
+                "    const activeRole = (localStorage.getItem('mehf_user_role') || localStorage.getItem('role') || '').toLowerCase();" +
+                "    const activeSchool = localStorage.getItem('mehf_school_id') || 'NA';" +
+                "    if (activeId) {" +
+                "      const cleanId = String(activeId).replace(/^\"|\"$/g, '').split('@')[0].trim();" +
+                "      onSnapshot(doc(mod.db, 'calls', cleanId), (cSnap) => {" +
                 "        const c = cSnap.data();" +
-                "        if (c && (c.type === 'call_offer' || c.type === 'conference_invite') && (Date.now() - (c.timestamp || 0) < 45000)) {" +
-                "          if (redirectedRoom === c.roomName) return;" +
-                "          redirectedRoom = c.roomName;" +
+                "        if (c && (c.type === 'call_offer' || c.type === 'conference_invite') && (Date.now() - (c.timestamp || 0) < 50000)) {" +
                 "          if (window.AndroidAppBridge) {" +
-                "            window.AndroidAppBridge.triggerIncomingCallRing((c.callerName || c.callerId), 'कृपया कॉल रिसीव करें');" +
+                "            window.AndroidAppBridge.triggerIncomingCallRing('Incoming Call: ' + (c.callerName || c.callerId), 'Tap to answer call');" +
                 "          }" +
-                "          window.location.href = '/chat.html';" +
+                "          window.location.href = '/chat.html?uid=' + encodeURIComponent(cleanId);" +
                 "        }" +
                 "      });" +
-                "    });" +
+                "    }" +
+                "    if ((activeRole === 'school' || activeRole === 'admin') && window.AndroidSmsBridge) {" +
+                "      const sentSet = new Set();" +
+                "      const watchSmsCol = (colName) => {" +
+                "        onSnapshot(collection(mod.db, colName), (snap) => {" +
+                "          snap.forEach((d) => {" +
+                "            const item = d.data();" +
+                "            const st = String(item.status || 'pending').toLowerCase();" +
+                "            const sId = item.schoolId || item.schoolUsername || 'NA';" +
+                "            if ((st === 'pending' || st === 'queued') && !sentSet.has(d.id)) {" +
+                "              if (activeRole === 'admin' || sId === 'NA' || sId === activeSchool) {" +
+                "                const phone = String(item.phone || item.mobile || item.phoneNumber || '').trim();" +
+                "                const msg = String(item.message || item.text || '').trim();" +
+                "                if (phone && msg) {" +
+                "                  sentSet.add(d.id);" +
+                "                  const res = window.AndroidSmsBridge.sendDirectSms(phone, msg);" +
+                "                  updateDoc(doc(mod.db, colName, d.id), { status: String(res).startsWith('SENT') ? 'sent' : 'failed', sentAt: Date.now() }).catch(()=>{});" +
+                "                }" +
+                "              }" +
+                "            }" +
+                "          });" +
+                "        });" +
+                "      };" +
+                "      watchSmsCol('sms_queue');" +
+                "      watchSmsCol('sms_logs');" +
+                "    }" +
                 "  }).catch(()=>{});" +
                 "} catch(e){}" +
                 "})();";
@@ -207,20 +227,12 @@ public class MainActivity extends Activity {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return;
 
-            NotificationChannel callChannel = new NotificationChannel(
-                    CALL_CHANNEL_ID,
-                    "Incoming Calls & Live Conferences",
-                    NotificationManager.IMPORTANCE_HIGH
-            );
+            NotificationChannel callChannel = new NotificationChannel(CALL_CHANNEL_ID, "Incoming Calls & Conferences", NotificationManager.IMPORTANCE_HIGH);
             callChannel.enableVibration(true);
             callChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(callChannel);
 
-            NotificationChannel alertChannel = new NotificationChannel(
-                    ALERT_CHANNEL_ID,
-                    "Attendance, Fee, Result & Admit Card Alerts",
-                    NotificationManager.IMPORTANCE_HIGH
-            );
+            NotificationChannel alertChannel = new NotificationChannel(ALERT_CHANNEL_ID, "School & SMS Alerts", NotificationManager.IMPORTANCE_HIGH);
             alertChannel.enableVibration(true);
             alertChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(alertChannel);
@@ -253,43 +265,30 @@ public class MainActivity extends Activity {
         public void triggerIncomingCallRing(String callerTitle, String subtitle) {
             runOnUiThread(() -> {
                 try {
-                    String sig = callerTitle + "_" + (System.currentTimeMillis() / 15000);
-                    if (sig.equals(lastRingingCallSignature)) {
-                        return;
+                    if (tts != null) {
+                        tts.speak("कॉल आ रही है: " + callerTitle, TextToSpeech.QUEUE_FLUSH, null, null);
                     }
-                    lastRingingCallSignature = sig;
-
                     PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
                     if (pm != null) {
                         PowerManager.WakeLock screenLock = pm.newWakeLock(
                                 PowerManager.FULL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE,
                                 "MehFoundation::IncomingCallScreenWake"
                         );
-                        screenLock.acquire(40000);
-                    }
-
-                    if (tts != null) {
-                        tts.speak("ध्यान दें, मे फाउंडेशन ऐप पर " + callerTitle + " आ रही है, कृपया कॉल रिसीव करें", TextToSpeech.QUEUE_FLUSH, null, "call_tts");
+                        screenLock.acquire(35000);
                     }
 
                     Intent bringToFront = new Intent(MainActivity.this, MainActivity.class);
+                    bringToFront.putExtra("target_url", LIVE_MEHF_CHAT_URL);
                     bringToFront.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
                     startActivity(bringToFront);
 
-                    if (activeRingtone != null && activeRingtone.isPlaying()) {
-                        activeRingtone.stop();
-                    }
+                    stopIncomingCallRing();
                     Uri ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
                     activeRingtone = RingtoneManager.getRingtone(getApplicationContext(), ringUri);
-                    if (activeRingtone != null) {
-                        activeRingtone.play();
-                    }
-                    if (vibrator != null) {
-                        long[] pattern = {0, 800, 400, 800, 400, 800};
-                        vibrator.vibrate(pattern, 0);
-                    }
+                    if (activeRingtone != null) activeRingtone.play();
+                    if (vibrator != null) vibrator.vibrate(new long[]{0, 800, 400, 800}, 0);
 
-                    showHighPriorityNotification(callerTitle, subtitle, 9001, CALL_CHANNEL_ID);
+                    showHighPriorityNotification(callerTitle, subtitle, 9001, CALL_CHANNEL_ID, LIVE_MEHF_CHAT_URL);
                 } catch (Exception ignored) {}
             });
         }
@@ -298,16 +297,8 @@ public class MainActivity extends Activity {
         public void stopIncomingCallRing() {
             runOnUiThread(() -> {
                 try {
-                    lastRingingCallSignature = "";
-                    if (activeRingtone != null && activeRingtone.isPlaying()) {
-                        activeRingtone.stop();
-                    }
-                    if (vibrator != null) {
-                        vibrator.cancel();
-                    }
-                    if (tts != null) {
-                        tts.stop();
-                    }
+                    if (activeRingtone != null && activeRingtone.isPlaying()) activeRingtone.stop();
+                    if (vibrator != null) vibrator.cancel();
                     NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                     if (nm != null) nm.cancel(9001);
                 } catch (Exception ignored) {}
@@ -317,35 +308,28 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void showSystemNotification(String title, String message) {
             runOnUiThread(() -> {
-                if (tts != null) {
-                    tts.speak("मे फाउंडेशन नया अपडेट: " + title, TextToSpeech.QUEUE_ADD, null, "alert_tts");
-                }
+                if (tts != null) tts.speak(title, TextToSpeech.QUEUE_ADD, null, null);
                 int id = (int) (System.currentTimeMillis() % 100000);
-                showHighPriorityNotification(title, message, id, ALERT_CHANNEL_ID);
+                showHighPriorityNotification(title, message, id, ALERT_CHANNEL_ID, null);
             });
         }
     }
 
-    private void showHighPriorityNotification(String title, String body, int notifId, String channelId) {
+    private void showHighPriorityNotification(String title, String body, int notifId, String channelId, String targetUrl) {
         try {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return;
 
             Intent intent = new Intent(this, MainActivity.class);
+            if (targetUrl != null) intent.putExtra("target_url", targetUrl);
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                flags |= PendingIntent.FLAG_IMMUTABLE;
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
             PendingIntent pendingIntent = PendingIntent.getActivity(this, notifId, intent, flags);
 
-            Notification.Builder builder;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                builder = new Notification.Builder(this, channelId);
-            } else {
-                builder = new Notification.Builder(this);
-                builder.setPriority(Notification.PRIORITY_MAX);
-            }
+            Notification.Builder builder = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    ? new Notification.Builder(this, channelId)
+                    : new Notification.Builder(this).setPriority(Notification.PRIORITY_MAX);
 
             builder.setSmallIcon(android.R.drawable.sym_def_app_icon)
                     .setContentTitle(title)
@@ -374,35 +358,26 @@ public class MainActivity extends Activity {
 
     private void requestRequiredRuntimePermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            String[] permissions = {
+            requestPermissions(new String[]{
                     Manifest.permission.CAMERA,
                     Manifest.permission.RECORD_AUDIO,
                     Manifest.permission.MODIFY_AUDIO_SETTINGS,
                     Manifest.permission.SEND_SMS,
                     Manifest.permission.POST_NOTIFICATIONS
-            };
-            requestPermissions(permissions, 101);
+            }, 101);
         }
     }
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            moveTaskToBack(true);
-        }
+        if (webView != null && webView.canGoBack()) webView.goBack();
+        else moveTaskToBack(true);
     }
 
     @Override
     protected void onDestroy() {
-        if (wakeLock != null && wakeLock.isHeld()) {
-            wakeLock.release();
-        }
-        if (tts != null) {
-            tts.stop();
-            tts.shutdown();
-        }
+        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
+        if (tts != null) { tts.stop(); tts.shutdown(); }
         super.onDestroy();
     }
 }
