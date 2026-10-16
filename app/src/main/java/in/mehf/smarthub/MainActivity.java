@@ -42,7 +42,8 @@ public class MainActivity extends Activity {
     private Vibrator vibrator;
     private TextToSpeech tts;
 
-    private static final String LIVE_MEHF_WEBSITE_URL = "https://mehf.in";
+    // Starts directly on login.html (which auto-opens the active dashboard if already saved)
+    private static final String LIVE_MEHF_START_URL = "https://mehf.in/login.html";
     private static final String LIVE_MEHF_CHAT_URL = "https://mehf.in/chat.html";
     private static final String CALL_CHANNEL_ID = "mehf_incoming_calls_channel";
     private static final String ALERT_CHANNEL_ID = "mehf_activity_alerts_channel";
@@ -65,7 +66,7 @@ public class MainActivity extends Activity {
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (pm != null) {
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MehFoundation::BackgroundSmsAndCallWakeLock");
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MehFoundation::MultiAccountWakeLock");
             wakeLock.acquire();
         }
 
@@ -109,12 +110,12 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
-                injectGlobalRealtimeAndSmsGatewayMonitor(view);
+                injectMultiAccountDaemonAndSwitcherBar(view);
             }
 
             @Override
             public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                if (failingUrl != null && failingUrl.equals(LIVE_MEHF_WEBSITE_URL)) {
+                if (failingUrl != null && failingUrl.equals(LIVE_MEHF_START_URL)) {
                     view.loadUrl("file:///android_asset/chat.html");
                 }
             }
@@ -160,47 +161,132 @@ public class MainActivity extends Activity {
         if (intent != null && intent.getStringExtra("target_url") != null) {
             webView.loadUrl(intent.getStringExtra("target_url"));
         } else if (webView.getUrl() == null) {
-            webView.loadUrl(LIVE_MEHF_WEBSITE_URL);
+            webView.loadUrl(LIVE_MEHF_START_URL);
         }
     }
 
-    // Runs in background across ALL pages of mehf.in:
-    // 1. Dispatches pending SMS from `sms_queue` & `sms_logs` via SIM automatically for School/Admin
-    // 2. Monitors incoming calls & user updates (Attendance, Fee, Result, Admit Card)
-    private void injectGlobalRealtimeAndSmsGatewayMonitor(WebView view) {
+    // Injects:
+    // 1. Session Bridge (Restores localStorage -> sessionStorage so dashboards never kick user out)
+    // 2. Floating Multi-Account Switcher Pill (Switch between 3 kids + staff account with 1 tap)
+    // 3. Simultaneous Multi-Account Realtime Listener (Monitors ALL saved accounts at once!)
+    private void injectMultiAccountDaemonAndSwitcherBar(WebView view) {
         String js = "(function() {" +
-                "if (window.__mehfGlobalNativeMonitorActive) return;" +
-                "window.__mehfGlobalNativeMonitorActive = true;" +
-                "if (window.location.pathname.indexOf('chat.html') !== -1) return;" +
                 "try {" +
-                "  import('/firebase-config.js').then(async (mod) => {" +
-                "    if (!mod || !mod.db) return;" +
-                "    const { doc, collection, onSnapshot, updateDoc } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');" +
-                "    const activeId = localStorage.getItem('mehf_active_account_doc_id_v2') || localStorage.getItem('mehf_user_doc_id') || localStorage.getItem('userDocId') || localStorage.getItem('username');" +
-                "    const activeRole = (localStorage.getItem('mehf_user_role') || localStorage.getItem('role') || '').toLowerCase();" +
-                "    const activeSchool = localStorage.getItem('mehf_school_id') || 'NA';" +
-                "    if (activeId) {" +
-                "      const cleanId = String(activeId).replace(/^\"|\"$/g, '').split('@')[0].trim();" +
-                "      onSnapshot(doc(mod.db, 'calls', cleanId), (cSnap) => {" +
-                "        const c = cSnap.data();" +
-                "        if (c && (c.type === 'call_offer' || c.type === 'conference_invite') && (Date.now() - (c.timestamp || 0) < 50000)) {" +
-                "          if (window.AndroidAppBridge) {" +
-                "            window.AndroidAppBridge.triggerIncomingCallRing('Incoming Call: ' + (c.callerName || c.callerId), 'Tap to answer call');" +
-                "          }" +
-                "          window.location.href = '/chat.html?uid=' + encodeURIComponent(cleanId);" +
-                "        }" +
-                "      });" +
+                "  const savedRaw = localStorage.getItem('mehf_persistent_accounts_v2');" +
+                "  let accs = savedRaw ? JSON.parse(savedRaw) : [];" +
+                "  const activeId = localStorage.getItem('mehf_active_account_doc_id_v2') || localStorage.getItem('loggedInUserDocId') || sessionStorage.getItem('loggedInUserDocId');" +
+                "  const curId = sessionStorage.getItem('loggedInUserDocId');" +
+                "  const curUser = sessionStorage.getItem('loggedInUserUsername');" +
+                "  const curRole = sessionStorage.getItem('loggedInUserRole');" +
+                "  const curName = sessionStorage.getItem('loggedInUserName');" +
+                "  if (curId && curRole) {" +
+                "    localStorage.setItem('loggedInUserDocId', curId);" +
+                "    localStorage.setItem('loggedInUserUsername', curUser || curId);" +
+                "    localStorage.setItem('loggedInUserRole', curRole);" +
+                "    localStorage.setItem('loggedInUserName', curName || curId);" +
+                "    localStorage.setItem('mehf_active_account_doc_id_v2', curId);" +
+                "    if (!accs.some(a => a.docId === curId)) {" +
+                "      accs.push({ docId: curId, username: curUser || curId, role: curRole, name: curName || curId, savedAt: Date.now() });" +
+                "      localStorage.setItem('mehf_persistent_accounts_v2', JSON.stringify(accs));" +
                 "    }" +
-                "    if ((activeRole === 'school' || activeRole === 'admin') && window.AndroidSmsBridge) {" +
-                "      const sentSet = new Set();" +
-                "      const watchSmsCol = (colName) => {" +
-                "        onSnapshot(collection(mod.db, colName), (snap) => {" +
-                "          snap.forEach((d) => {" +
-                "            const item = d.data();" +
-                "            const st = String(item.status || 'pending').toLowerCase();" +
-                "            const sId = item.schoolId || item.schoolUsername || 'NA';" +
-                "            if ((st === 'pending' || st === 'queued') && !sentSet.has(d.id)) {" +
-                "              if (activeRole === 'admin' || sId === 'NA' || sId === activeSchool) {" +
+                "  } else if (activeId && accs.length > 0) {" +
+                "    const found = accs.find(a => a.docId === activeId) || accs[0];" +
+                "    if (found) {" +
+                "      sessionStorage.setItem('loggedInUserDocId', found.docId);" +
+                "      sessionStorage.setItem('loggedInUserUsername', found.username);" +
+                "      sessionStorage.setItem('loggedInUserRole', found.role);" +
+                "      sessionStorage.setItem('loggedInUserName', found.name);" +
+                "    }" +
+                "  }" +
+                "  const redirects = { admin: '/admin-dashboard.html', school: '/school-dashboard.html', teacher: '/teacher-dashboard.html', student: '/student-dashboard.html', volunteer: '/volunteer-dashboard.html', driver: '/transport-dashboard.html' };" +
+                "  if (accs.length > 0 && window.location.pathname.indexOf('login.html') === -1 && !document.getElementById('mehfFloatingAccountSwitcher')) {" +
+                "    const bar = document.createElement('div');" +
+                "    bar.id = 'mehfFloatingAccountSwitcher';" +
+                "    bar.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:999990;background:rgba(15,23,42,0.95);border:1.5px solid #fbbf24;border-radius:999px;padding:5px 10px;display:flex;align-items:center;gap:6px;box-shadow:0 10px 25px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;';" +
+                "    let opts = accs.map(a => `<option value='${a.docId}' ${a.docId === (sessionStorage.getItem('loggedInUserDocId') || activeId) ? 'selected' : ''}>👤 ${a.name} (${a.role.toUpperCase()})</option>`).join('');" +
+                "    opts += `<option value='__ADD__'>➕ नया खाता जोड़ें...</option>`;" +
+                "    bar.innerHTML = `<span style='width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;' title='All ${accs.length} accounts active'></span>` +" +
+                "                    `<select id='mehfGlobalAccSel' style='background:transparent;color:#fde68a;border:none;font-size:11px;font-weight:800;outline:none;max-width:155px;'>${opts}</select>`;" +
+                "    document.body.appendChild(bar);" +
+                "    document.getElementById('mehfGlobalAccSel').addEventListener('change', function() {" +
+                "      if (this.value === '__ADD__') { window.location.href = '/login.html?add=1'; return; }" +
+                "      const target = accs.find(a => a.docId === this.value);" +
+                "      if (target) {" +
+                "        localStorage.setItem('mehf_active_account_doc_id_v2', target.docId);" +
+                "        localStorage.setItem('loggedInUserDocId', target.docId);" +
+                "        localStorage.setItem('loggedInUserUsername', target.username);" +
+                "        localStorage.setItem('loggedInUserRole', target.role);" +
+                "        localStorage.setItem('loggedInUserName', target.name);" +
+                "        sessionStorage.setItem('loggedInUserDocId', target.docId);" +
+                "        sessionStorage.setItem('loggedInUserUsername', target.username);" +
+                "        sessionStorage.setItem('loggedInUserRole', target.role);" +
+                "        sessionStorage.setItem('loggedInUserName', target.name);" +
+                "        window.location.href = redirects[target.role] || '/other-dashboard.html';" +
+                "      }" +
+                "    });" +
+                "  }" +
+                "  if (window.__mehfMultiAccountDaemonRunning) return;" +
+                "  window.__mehfMultiAccountDaemonRunning = true;" +
+                "  import('/firebase-config.js?v=100').then(async (mod) => {" +
+                "    if (!mod || !mod.db) return;" +
+                "    const { doc, collection, query, where, onSnapshot, updateDoc } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');" +
+                "    accs.forEach(acc => {" +
+                "      let prevUserSnap = null;" +
+                "      onSnapshot(doc(mod.db, 'users', acc.docId), (snap) => {" +
+                "        if (!snap.exists()) return;" +
+                "        const cur = snap.data();" +
+                "        const label = (cur.name || acc.name || acc.username) + ' (' + (acc.role || '').toUpperCase() + ')';" +
+                "        if (prevUserSnap && window.AndroidAppBridge) {" +
+                "          if (cur.attendanceStatus !== prevUserSnap.attendanceStatus || cur.lastAttendanceDate !== prevUserSnap.lastAttendanceDate) {" +
+                "            window.AndroidAppBridge.showSystemNotification('हाजिरी अपडेट: ' + label, 'आज की उपस्थिति स्थिति: ' + (cur.attendanceStatus || 'Updated'));" +
+                "          }" +
+                "          if (cur.paidFee !== prevUserSnap.paidFee || cur.dueFee !== prevUserSnap.dueFee) {" +
+                "            window.AndroidAppBridge.showSystemNotification('फीस अपडेट: ' + label, 'फीस खाते में नया अपडेट हुआ है।');" +
+                "          }" +
+                "          if (cur.resultPublished !== prevUserSnap.resultPublished || cur.marksUpdated !== prevUserSnap.marksUpdated) {" +
+                "            window.AndroidAppBridge.showSystemNotification('रिजल्ट जारी: ' + label, 'परीक्षा परिणाम अपडेट किया गया है।');" +
+                "          }" +
+                "          if (cur.admitCardGenerated !== prevUserSnap.admitCardGenerated || cur.admitCardUrl !== prevUserSnap.admitCardUrl) {" +
+                "            window.AndroidAppBridge.showSystemNotification('एडमिट कार्ड जारी: ' + label, 'आपका एडमिट कार्ड तैयार है।');" +
+                "          }" +
+                "        }" +
+                "        prevUserSnap = Object.assign({}, cur);" +
+                "      });" +
+                "      let chatInitLoaded = false;" +
+                "      onSnapshot(query(collection(mod.db, 'chats'), where('receiverId', '==', acc.docId)), (cSnap) => {" +
+                "        if (!chatInitLoaded) { chatInitLoaded = true; return; }" +
+                "        cSnap.docChanges().forEach(change => {" +
+                "          if (change.type === 'added') {" +
+                "            const msg = change.doc.data();" +
+                "            if (msg && (Date.now() - (msg.timestamp || 0) < 30000) && window.AndroidAppBridge) {" +
+                "              window.AndroidAppBridge.showSystemNotification(acc.name + ' के लिए नया संदेश (' + (msg.senderName || 'Notice') + ')', msg.message || 'नया चैट/नोटिस प्राप्त हुआ');" +
+                "            }" +
+                "          }" +
+                "        });" +
+                "      });" +
+                "      if (window.location.pathname.indexOf('chat.html') === -1) {" +
+                "        onSnapshot(doc(mod.db, 'calls', acc.docId), (callSnap) => {" +
+                "          const c = callSnap.data();" +
+                "          if (c && (c.type === 'call_offer' || c.type === 'conference_invite') && (Date.now() - (c.timestamp || 0) < 50000)) {" +
+                "            localStorage.setItem('mehf_active_account_doc_id_v2', acc.docId);" +
+                "            localStorage.setItem('loggedInUserDocId', acc.docId);" +
+                "            sessionStorage.setItem('loggedInUserDocId', acc.docId);" +
+                "            if (window.AndroidAppBridge) {" +
+                "              window.AndroidAppBridge.triggerIncomingCallRing(acc.name + ' के लिए कॉल: ' + (c.callerName || c.callerId), 'उठाने के लिए टैप करें');" +
+                "            }" +
+                "            window.location.href = '/chat.html?uid=' + encodeURIComponent(acc.docId);" +
+                "          }" +
+                "        });" +
+                "      }" +
+                "      if ((acc.role === 'school' || acc.role === 'admin') && window.AndroidSmsBridge && !window.__mehfSimSmsWatcherStarted) {" +
+                "        window.__mehfSimSmsWatcherStarted = true;" +
+                "        const sentSet = new Set();" +
+                "        ['sms_queue', 'sms_logs'].forEach(colName => {" +
+                "          onSnapshot(collection(mod.db, colName), (snap) => {" +
+                "            snap.forEach(d => {" +
+                "              const item = d.data();" +
+                "              const st = String(item.status || 'pending').toLowerCase();" +
+                "              if ((st === 'pending' || st === 'queued') && !sentSet.has(d.id)) {" +
                 "                const phone = String(item.phone || item.mobile || item.phoneNumber || '').trim();" +
                 "                const msg = String(item.message || item.text || '').trim();" +
                 "                if (phone && msg) {" +
@@ -209,13 +295,11 @@ public class MainActivity extends Activity {
                 "                  updateDoc(doc(mod.db, colName, d.id), { status: String(res).startsWith('SENT') ? 'sent' : 'failed', sentAt: Date.now() }).catch(()=>{});" +
                 "                }" +
                 "              }" +
-                "            }" +
+                "            });" +
                 "          });" +
                 "        });" +
-                "      };" +
-                "      watchSmsCol('sms_queue');" +
-                "      watchSmsCol('sms_logs');" +
-                "    }" +
+                "      }" +
+                "    });" +
                 "  }).catch(()=>{});" +
                 "} catch(e){}" +
                 "})();";
@@ -232,7 +316,7 @@ public class MainActivity extends Activity {
             callChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(callChannel);
 
-            NotificationChannel alertChannel = new NotificationChannel(ALERT_CHANNEL_ID, "School & SMS Alerts", NotificationManager.IMPORTANCE_HIGH);
+            NotificationChannel alertChannel = new NotificationChannel(ALERT_CHANNEL_ID, "Multi-Account Notices & Alerts", NotificationManager.IMPORTANCE_HIGH);
             alertChannel.enableVibration(true);
             alertChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(alertChannel);
@@ -266,7 +350,7 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> {
                 try {
                     if (tts != null) {
-                        tts.speak("कॉल आ रही है: " + callerTitle, TextToSpeech.QUEUE_FLUSH, null, null);
+                        tts.speak("ध्यान दें, " + callerTitle, TextToSpeech.QUEUE_FLUSH, null, null);
                     }
                     PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
                     if (pm != null) {
@@ -308,7 +392,9 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void showSystemNotification(String title, String message) {
             runOnUiThread(() -> {
-                if (tts != null) tts.speak(title, TextToSpeech.QUEUE_ADD, null, null);
+                if (tts != null) {
+                    tts.speak(title + ". " + message, TextToSpeech.QUEUE_ADD, null, null);
+                }
                 int id = (int) (System.currentTimeMillis() % 100000);
                 showHighPriorityNotification(title, message, id, ALERT_CHANNEL_ID, null);
             });
