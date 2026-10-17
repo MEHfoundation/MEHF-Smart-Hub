@@ -10,6 +10,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.MutableContextWrapper;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.media.AudioManager;
@@ -46,8 +47,9 @@ import java.util.Locale;
 
 public class MainActivity extends Activity {
 
-    // Static persistent WebView so the app NEVER reloads from 0 when reopened
+    // Static persistent WebView wrapped in MutableContextWrapper so <select> popups & dialogs ALWAYS work!
     private static WebView persistentWebView;
+    private static MutableContextWrapper webViewContextWrapper;
     private static PowerManager.WakeLock wakeLock;
     private static Ringtone activeRingtone;
     private static Vibrator vibrator;
@@ -101,11 +103,16 @@ public class MainActivity extends Activity {
         }
 
         // Reuse existing persistent WebView so state, Firebase listeners & chats stay 100% alive in memory
+        // Using MutableContextWrapper bound to 'this' Activity ensures <select> dropdowns & popups ALWAYS open!
         if (persistentWebView == null) {
-            persistentWebView = new WebView(getApplicationContext());
+            webViewContextWrapper = new MutableContextWrapper(this);
+            persistentWebView = new WebView(webViewContextWrapper);
             configureWebView(persistentWebView);
             persistentWebView.loadUrl(LIVE_MEHF_START_URL);
         } else {
+            if (webViewContextWrapper != null) {
+                webViewContextWrapper.setBaseContext(this);
+            }
             if (persistentWebView.getParent() instanceof ViewGroup) {
                 ((ViewGroup) persistentWebView.getParent()).removeView(persistentWebView);
             }
