@@ -274,7 +274,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Injects 24x7 Multi-Account Watcher + Universal SIM SMS Auto-Dispatcher
+        // 3. Simultaneous Multi-Account Realtime Listener (Monitors ALL saved accounts at once!)
     private void injectMultiAccountDaemonAndSmsMonitor(WebView view) {
         String js = "(function() {" +
                 "try {" +
@@ -336,6 +336,11 @@ public class MainActivity extends Activity {
                 "  import('/firebase-config.js?v=100').then(async (mod) => {" +
                 "    if (!mod || !mod.db) return;" +
                 "    const { doc, collection, query, where, onSnapshot, updateDoc } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');" +
+                "    const pageName = (window.location.pathname.split('/').pop() || 'home').replace('.html', '').toUpperCase();" +
+                "    const activeDoc = sessionStorage.getItem('loggedInUserDocId') || localStorage.getItem('loggedInUserDocId');" +
+                "    if (activeDoc) {" +
+                "      updateDoc(doc(mod.db, 'users', activeDoc), { isUsingApp: true, isOnline: true, lastSeen: Date.now(), lastAppActive: Date.now(), lastFeatureUsed: 'Android App (' + pageName + ')' }).catch(()=>{});" +
+                "    }" +
                 "    const handledCallRooms = new Set();" +
                 "    accs.forEach(acc => {" +
                 "      let prevUserSnap = null;" +
@@ -722,7 +727,7 @@ public class MainActivity extends Activity {
         if (persistentWebView != null && persistentWebView.canGoBack()) {
             persistentWebView.goBack();
         } else {
-            // Move app to background instead of destroying Activity so WebView & listeners stay 100% alive
+            // Move app background instead of destroying Activity so WebView & listeners stay 100% alive
             moveTaskToBack(true);
         }
     }
