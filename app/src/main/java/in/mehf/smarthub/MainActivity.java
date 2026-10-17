@@ -9,6 +9,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.media.AudioManager;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
@@ -20,9 +21,11 @@ import android.os.PowerManager;
 import android.os.Vibrator;
 import android.speech.tts.TextToSpeech;
 import android.telephony.SmsManager;
+import android.telephony.SubscriptionManager;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
@@ -32,6 +35,7 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
@@ -41,10 +45,11 @@ public class MainActivity extends Activity {
     private Ringtone activeRingtone;
     private Vibrator vibrator;
     private TextToSpeech tts;
+    private boolean isCallCurrentlyRinging = false;
+    private long lastRingTriggerTime = 0;
 
-    // Starts directly on login.html (which auto-opens the active dashboard if already saved)
-    private static final String LIVE_MEHF_START_URL = "https://mehf.in/login.html";
-    private static final String LIVE_MEHF_CHAT_URL = "https://mehf.in/chat.html";
+    private static final String LIVE_MEHF_START_URL = "[https://mehf.in/login.html](https://mehf.in/login.html)";
+    private static final String LIVE_MEHF_CHAT_URL = "[https://mehf.in/chat.html](https://mehf.in/chat.html)";
     private static final String CALL_CHANNEL_ID = "mehf_incoming_calls_channel";
     private static final String ALERT_CHANNEL_ID = "mehf_activity_alerts_channel";
 
@@ -66,7 +71,7 @@ public class MainActivity extends Activity {
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (pm != null) {
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MehFoundation::MultiAccountWakeLock");
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MehFoundation::BackgroundWakeLock");
             wakeLock.acquire();
         }
 
@@ -87,6 +92,7 @@ public class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
+        settings.setGeolocationEnabled(true); // Enables GPS Location for Attendance
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
@@ -110,21 +116,27 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
-                injectMultiAccountDaemonAndSwitcherBar(view);
-            }
-
-            @Override
-            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
-                if (failingUrl != null && failingUrl.equals(LIVE_MEHF_START_URL)) {
-                    view.loadUrl("file:///android_asset/chat.html");
-                }
+                injectMultiAccountDaemonAndSmsEngine(view);
             }
         });
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
-                runOnUiThread(() -> request.grant(request.getResources()));
+                runOnUiThread(() -> {
+                    try {
+                        request.grant(request.getResources());
+                    } catch (Exception ignored) {}
+                });
+            }
+
+            // Grants GPS Live Location permission to WebView for Attendance pages
+            @Override
+            public void onGeolocationPermissionsShowPrompt(final String origin, final GeolocationPermissions.Callback callback) {
+                runOnUiThread(() -> {
+                    requestRequiredRuntimePermissions();
+                    callback.invoke(origin, true, false);
+                });
             }
         });
 
@@ -157,19 +169,22 @@ public class MainActivity extends Activity {
         handleLaunchIntent(intent);
     }
 
+    // Prevents infinite reload loop if chat.html is already open!
     private void handleLaunchIntent(Intent intent) {
-        if (intent != null && intent.getStringExtra("target_url") != null) {
-            webView.loadUrl(intent.getStringExtra("target_url"));
-        } else if (webView.getUrl() == null) {
+        if (webView == null) return;
+        String currentUrl = webView.getUrl();
+        String targetUrl = (intent != null) ? intent.getStringExtra("target_url") : null;
+
+        if (targetUrl != null) {
+            if (currentUrl == null || !currentUrl.contains("chat.html")) {
+                webView.loadUrl(targetUrl);
+            }
+        } else if (currentUrl == null) {
             webView.loadUrl(LIVE_MEHF_START_URL);
         }
     }
 
-    // Injects:
-    // 1. Session Bridge (Restores localStorage -> sessionStorage so dashboards never kick user out)
-    // 2. Floating Multi-Account Switcher Pill (Switch between 3 kids + staff account with 1 tap)
-    // 3. Simultaneous Multi-Account Realtime Listener (Monitors ALL saved accounts at once!)
-    private void injectMultiAccountDaemonAndSwitcherBar(WebView view) {
+    private void injectMultiAccountDaemonAndSmsEngine(WebView view) {
         String js = "(function() {" +
                 "try {" +
                 "  const savedRaw = localStorage.getItem('mehf_persistent_accounts_v2');" +
@@ -205,7 +220,7 @@ public class MainActivity extends Activity {
                 "    bar.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:999990;background:rgba(15,23,42,0.95);border:1.5px solid #fbbf24;border-radius:999px;padding:5px 10px;display:flex;align-items:center;gap:6px;box-shadow:0 10px 25px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;';" +
                 "    let opts = accs.map(a => `<option value='${a.docId}' ${a.docId === (sessionStorage.getItem('loggedInUserDocId') || activeId) ? 'selected' : ''}>👤 ${a.name} (${a.role.toUpperCase()})</option>`).join('');" +
                 "    opts += `<option value='__ADD__'>➕ नया खाता जोड़ें...</option>`;" +
-                "    bar.innerHTML = `<span style='width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;' title='All ${accs.length} accounts active'></span>` +" +
+                "    bar.innerHTML = `<span style='width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;'></span>` +" +
                 "                    `<select id='mehfGlobalAccSel' style='background:transparent;color:#fde68a;border:none;font-size:11px;font-weight:800;outline:none;max-width:155px;'>${opts}</select>`;" +
                 "    document.body.appendChild(bar);" +
                 "    document.getElementById('mehfGlobalAccSel').addEventListener('change', function() {" +
@@ -229,51 +244,17 @@ public class MainActivity extends Activity {
                 "  window.__mehfMultiAccountDaemonRunning = true;" +
                 "  import('/firebase-config.js?v=100').then(async (mod) => {" +
                 "    if (!mod || !mod.db) return;" +
-                "    const { doc, collection, query, where, onSnapshot, updateDoc } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');" +
+                "    const { doc, collection, query, where, onSnapshot, updateDoc } = await import('[https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js](https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js)');" +
+                "    const handledCallRooms = new Set();" +
                 "    accs.forEach(acc => {" +
-                "      let prevUserSnap = null;" +
-                "      onSnapshot(doc(mod.db, 'users', acc.docId), (snap) => {" +
-                "        if (!snap.exists()) return;" +
-                "        const cur = snap.data();" +
-                "        const label = (cur.name || acc.name || acc.username) + ' (' + (acc.role || '').toUpperCase() + ')';" +
-                "        if (prevUserSnap && window.AndroidAppBridge) {" +
-                "          if (cur.attendanceStatus !== prevUserSnap.attendanceStatus || cur.lastAttendanceDate !== prevUserSnap.lastAttendanceDate) {" +
-                "            window.AndroidAppBridge.showSystemNotification('हाजिरी अपडेट: ' + label, 'आज की उपस्थिति स्थिति: ' + (cur.attendanceStatus || 'Updated'));" +
-                "          }" +
-                "          if (cur.paidFee !== prevUserSnap.paidFee || cur.dueFee !== prevUserSnap.dueFee) {" +
-                "            window.AndroidAppBridge.showSystemNotification('फीस अपडेट: ' + label, 'फीस खाते में नया अपडेट हुआ है।');" +
-                "          }" +
-                "          if (cur.resultPublished !== prevUserSnap.resultPublished || cur.marksUpdated !== prevUserSnap.marksUpdated) {" +
-                "            window.AndroidAppBridge.showSystemNotification('रिजल्ट जारी: ' + label, 'परीक्षा परिणाम अपडेट किया गया है।');" +
-                "          }" +
-                "          if (cur.admitCardGenerated !== prevUserSnap.admitCardGenerated || cur.admitCardUrl !== prevUserSnap.admitCardUrl) {" +
-                "            window.AndroidAppBridge.showSystemNotification('एडमिट कार्ड जारी: ' + label, 'आपका एडमिट कार्ड तैयार है।');" +
-                "          }" +
-                "        }" +
-                "        prevUserSnap = Object.assign({}, cur);" +
-                "      });" +
-                "      let chatInitLoaded = false;" +
-                "      onSnapshot(query(collection(mod.db, 'chats'), where('receiverId', '==', acc.docId)), (cSnap) => {" +
-                "        if (!chatInitLoaded) { chatInitLoaded = true; return; }" +
-                "        cSnap.docChanges().forEach(change => {" +
-                "          if (change.type === 'added') {" +
-                "            const msg = change.doc.data();" +
-                "            if (msg && (Date.now() - (msg.timestamp || 0) < 30000) && window.AndroidAppBridge) {" +
-                "              window.AndroidAppBridge.showSystemNotification(acc.name + ' के लिए नया संदेश (' + (msg.senderName || 'Notice') + ')', msg.message || 'नया चैट/नोटिस प्राप्त हुआ');" +
-                "            }" +
-                "          }" +
-                "        });" +
-                "      });" +
                 "      if (window.location.pathname.indexOf('chat.html') === -1) {" +
                 "        onSnapshot(doc(mod.db, 'calls', acc.docId), (callSnap) => {" +
                 "          const c = callSnap.data();" +
-                "          if (c && (c.type === 'call_offer' || c.type === 'conference_invite') && (Date.now() - (c.timestamp || 0) < 50000)) {" +
+                "          if (c && c.roomName && !handledCallRooms.has(c.roomName) && (c.type === 'call_offer' || c.type === 'conference_invite') && (Date.now() - (c.timestamp || 0) < 45000)) {" +
+                "            handledCallRooms.add(c.roomName);" +
                 "            localStorage.setItem('mehf_active_account_doc_id_v2', acc.docId);" +
                 "            localStorage.setItem('loggedInUserDocId', acc.docId);" +
                 "            sessionStorage.setItem('loggedInUserDocId', acc.docId);" +
-                "            if (window.AndroidAppBridge) {" +
-                "              window.AndroidAppBridge.triggerIncomingCallRing(acc.name + ' के लिए कॉल: ' + (c.callerName || c.callerId), 'उठाने के लिए टैप करें');" +
-                "            }" +
                 "            window.location.href = '/chat.html?uid=' + encodeURIComponent(acc.docId);" +
                 "          }" +
                 "        });" +
@@ -287,12 +268,12 @@ public class MainActivity extends Activity {
                 "              const item = d.data();" +
                 "              const st = String(item.status || 'pending').toLowerCase();" +
                 "              if ((st === 'pending' || st === 'queued') && !sentSet.has(d.id)) {" +
-                "                const phone = String(item.phone || item.mobile || item.phoneNumber || '').trim();" +
-                "                const msg = String(item.message || item.text || '').trim();" +
+                "                const phone = String(item.phone || item.mobile || item.phoneNumber || item.to || '').trim();" +
+                "                const msg = String(item.message || item.msg || item.text || item.body || '').trim();" +
                 "                if (phone && msg) {" +
                 "                  sentSet.add(d.id);" +
                 "                  const res = window.AndroidSmsBridge.sendDirectSms(phone, msg);" +
-                "                  updateDoc(doc(mod.db, colName, d.id), { status: String(res).startsWith('SENT') ? 'sent' : 'failed', sentAt: Date.now() }).catch(()=>{});" +
+                "                  updateDoc(doc(mod.db, colName, d.id), { status: String(res).startsWith('SENT') ? 'sent' : 'failed', sentAt: Date.now(), gatewayResponse: String(res) }).catch(()=>{});" +
                 "                }" +
                 "              }" +
                 "            });" +
@@ -316,7 +297,7 @@ public class MainActivity extends Activity {
             callChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(callChannel);
 
-            NotificationChannel alertChannel = new NotificationChannel(ALERT_CHANNEL_ID, "Multi-Account Notices & Alerts", NotificationManager.IMPORTANCE_HIGH);
+            NotificationChannel alertChannel = new NotificationChannel(ALERT_CHANNEL_ID, "School Notices & Alerts", NotificationManager.IMPORTANCE_HIGH);
             alertChannel.enableVibration(true);
             alertChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(alertChannel);
@@ -345,13 +326,18 @@ public class MainActivity extends Activity {
             });
         }
 
+        // Fixed: Never calls startActivity() if already ringing or in foreground, preventing refresh loop!
         @JavascriptInterface
         public void triggerIncomingCallRing(String callerTitle, String subtitle) {
             runOnUiThread(() -> {
                 try {
-                    if (tts != null) {
-                        tts.speak("ध्यान दें, " + callerTitle, TextToSpeech.QUEUE_FLUSH, null, null);
+                    long now = System.currentTimeMillis();
+                    if (isCallCurrentlyRinging && (now - lastRingTriggerTime < 25000)) {
+                        return;
                     }
+                    isCallCurrentlyRinging = true;
+                    lastRingTriggerTime = now;
+
                     PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
                     if (pm != null) {
                         PowerManager.WakeLock screenLock = pm.newWakeLock(
@@ -361,18 +347,19 @@ public class MainActivity extends Activity {
                         screenLock.acquire(35000);
                     }
 
-                    Intent bringToFront = new Intent(MainActivity.this, MainActivity.class);
-                    bringToFront.putExtra("target_url", LIVE_MEHF_CHAT_URL);
-                    bringToFront.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                    startActivity(bringToFront);
+                    if (tts != null) {
+                        tts.speak("ध्यान दें, " + callerTitle, TextToSpeech.QUEUE_FLUSH, null, null);
+                    }
 
-                    stopIncomingCallRing();
+                    if (activeRingtone != null && activeRingtone.isPlaying()) {
+                        activeRingtone.stop();
+                    }
                     Uri ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
                     activeRingtone = RingtoneManager.getRingtone(getApplicationContext(), ringUri);
                     if (activeRingtone != null) activeRingtone.play();
                     if (vibrator != null) vibrator.vibrate(new long[]{0, 800, 400, 800}, 0);
 
-                    showHighPriorityNotification(callerTitle, subtitle, 9001, CALL_CHANNEL_ID, LIVE_MEHF_CHAT_URL);
+                    showHighPriorityNotification(callerTitle, subtitle, 9001, CALL_CHANNEL_ID, null);
                 } catch (Exception ignored) {}
             });
         }
@@ -381,6 +368,7 @@ public class MainActivity extends Activity {
         public void stopIncomingCallRing() {
             runOnUiThread(() -> {
                 try {
+                    isCallCurrentlyRinging = false;
                     if (activeRingtone != null && activeRingtone.isPlaying()) activeRingtone.stop();
                     if (vibrator != null) vibrator.cancel();
                     NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
@@ -392,7 +380,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void showSystemNotification(String title, String message) {
             runOnUiThread(() -> {
-                if (tts != null) {
+                if (tts != null && !isCallCurrentlyRinging) {
                     tts.speak(title + ". " + message, TextToSpeech.QUEUE_ADD, null, null);
                 }
                 int id = (int) (System.currentTimeMillis() % 100000);
@@ -421,20 +409,47 @@ public class MainActivity extends Activity {
                     .setContentTitle(title)
                     .setContentText(body)
                     .setAutoCancel(true)
-                    .setContentIntent(pendingIntent)
-                    .setFullScreenIntent(pendingIntent, true);
+                    .setContentIntent(pendingIntent);
 
             nm.notify(notifId, builder.build());
         } catch (Exception ignored) {}
     }
 
+    // Android 14 / 15 / 16 Compatible Dual-SIM Aware SMS Gateway
     public class NativeSmsGatewayBridge {
         @JavascriptInterface
         public String sendDirectSms(String phoneNumber, String messageBody) {
             try {
-                SmsManager smsManager = SmsManager.getDefault();
+                if (phoneNumber == null || messageBody == null) return "ERROR: Empty phone or message";
+                String cleanPhone = phoneNumber.replaceAll("[^0-9+]", "");
+                if (cleanPhone.length() == 10) {
+                    cleanPhone = "+91" + cleanPhone;
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+                        requestPermissions(new String[]{Manifest.permission.SEND_SMS, Manifest.permission.READ_PHONE_STATE}, 102);
+                        return "ERROR: SEND_SMS Permission not granted yet";
+                    }
+                }
+
+                SmsManager smsManager;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    smsManager = getApplicationContext().getSystemService(SmsManager.class);
+                    if (smsManager == null) smsManager = SmsManager.getDefault();
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                    int subId = SubscriptionManager.getDefaultSmsSubscriptionId();
+                    if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                        smsManager = SmsManager.getSmsManagerForSubscriptionId(subId);
+                    } else {
+                        smsManager = SmsManager.getDefault();
+                    }
+                } else {
+                    smsManager = SmsManager.getDefault();
+                }
+
                 ArrayList<String> parts = smsManager.divideMessage(messageBody);
-                smsManager.sendMultipartTextMessage(phoneNumber, null, parts, null, null);
+                smsManager.sendMultipartTextMessage(cleanPhone, null, parts, null, null);
                 return "SENT";
             } catch (Exception e) {
                 return "ERROR: " + e.getMessage();
@@ -442,15 +457,28 @@ public class MainActivity extends Activity {
         }
     }
 
+    // Requests only missing permissions on Android 13 / 14 / 15 / 16
     private void requestRequiredRuntimePermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            requestPermissions(new String[]{
+            String[] allPerms = {
                     Manifest.permission.CAMERA,
                     Manifest.permission.RECORD_AUDIO,
                     Manifest.permission.MODIFY_AUDIO_SETTINGS,
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
                     Manifest.permission.SEND_SMS,
+                    Manifest.permission.READ_PHONE_STATE,
                     Manifest.permission.POST_NOTIFICATIONS
-            }, 101);
+            };
+            List<String> needed = new ArrayList<>();
+            for (String p : allPerms) {
+                if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) {
+                    needed.add(p);
+                }
+            }
+            if (!needed.isEmpty()) {
+                requestPermissions(needed.toArray(new String[0]), 101);
+            }
         }
     }
 
