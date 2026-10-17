@@ -1,57 +1,67 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="in.mehf.smarthub">
+    
+<!-- Network & WebRTC Calling Permissions -->
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
-    <!-- Network & WebRTC Calling Permissions -->
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+<!-- GPS Live Location Permissions for Teacher/Student Selfie Attendance -->
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
-    <!-- GPS Live Location Permissions for Teacher/Student Selfie Attendance -->
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<!-- 24x7 Background Keep-Alive Foreground Service & Wake Permissions -->
+<uses-permission android:name="android.permission.WAKE_LOCK" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+<uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+<uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- Keep Call, Ring & FullScreen Wake Active When Screen is Locked -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <uses-permission android:name="android.permission.VIBRATE" />
+<!-- Direct School SIM SMS Gateway Permissions (Android 14/15/16 Dual-SIM Compatible) -->
+<uses-permission android:name="android.permission.SEND_SMS" />
+<uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
-    <!-- Direct School SIM SMS Gateway Permissions (Android 14/15/16 Dual-SIM Compatible) -->
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+<uses-feature android:name="android.hardware.camera" android:required="false" />
+<uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+<uses-feature android:name="android.hardware.microphone" android:required="false" />
+<uses-feature android:name="android.hardware.telephony" android:required="false" />
+<uses-feature android:name="android.hardware.location.gps" android:required="false" />
 
-    <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
-    <uses-feature android:name="android.hardware.microphone" android:required="false" />
-    <uses-feature android:name="android.hardware.telephony" android:required="false" />
-    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+<application
+    android:allowBackup="true"
+    android:icon="@drawable/ic_launcher"
+    android:roundIcon="@drawable/ic_launcher"
+    android:label="Meh foundation"
+    android:usesCleartextTraffic="true"
+    android:hardwareAccelerated="true"
+    android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
 
-    <application
-        android:allowBackup="true"
-        android:icon="@drawable/ic_launcher"
-        android:roundIcon="@drawable/ic_launcher"
-        android:label="Meh foundation"
-        android:usesCleartextTraffic="true"
-        android:hardwareAccelerated="true"
-        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+    <activity
+        android:name=".MainActivity"
+        android:exported="true"
+        android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
+        android:launchMode="singleTask"
+        android:showWhenLocked="true"
+        android:turnScreenOn="true">
+        <intent-filter>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent-filter>
+    </activity>
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden|smallestScreenSize|screenLayout"
-            android:launchMode="singleTask"
-            android:showWhenLocked="true"
-            android:turnScreenOn="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
+    <!-- 24x7 Immortal Background Service for Calls, Notices & Auto-SMS Gateway -->
+    <service
+        android:name=".MainActivity$MehfKeepAliveService"
+        android:enabled="true"
+        android:exported="false"
+        android:stopWithTask="false"
+        android:foregroundServiceType="dataSync" />
+</application>
 
 </manifest>
