@@ -29,6 +29,7 @@ import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
+import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -45,11 +46,14 @@ public class MainActivity extends Activity {
     private Ringtone activeRingtone;
     private Vibrator vibrator;
     private TextToSpeech tts;
-    private boolean isCallCurrentlyRinging = false;
-    private long lastRingTriggerTime = 0;
+    private ValueCallback<Uri[]> filePathCallback;
 
-    private static final String LIVE_MEHF_START_URL = "[https://mehf.in/login.html](https://mehf.in/login.html)";
-    private static final String LIVE_MEHF_CHAT_URL = "[https://mehf.in/chat.html](https://mehf.in/chat.html)";
+    private long lastCallRingTriggerTime = 0;
+
+    private static final int FILE_CHOOSER_RESULT_CODE = 202;
+    private static final int PERMISSION_REQUEST_CODE = 101;
+    private static final String LIVE_MEHF_START_URL = "https://mehf.in/login.html";
+    private static final String LIVE_MEHF_CHAT_URL = "https://mehf.in/chat.html";
     private static final String CALL_CHANNEL_ID = "mehf_incoming_calls_channel";
     private static final String ALERT_CHANNEL_ID = "mehf_activity_alerts_channel";
 
@@ -92,10 +96,11 @@ public class MainActivity extends Activity {
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
-        settings.setGeolocationEnabled(true); // Enables GPS Location for Attendance
+        settings.setGeolocationEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setUseWideViewPort(true);
         settings.setLoadWithOverviewMode(true);
         settings.setSupportZoom(false);
@@ -116,27 +121,53 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
                 CookieManager.getInstance().flush();
-                injectMultiAccountDaemonAndSmsEngine(view);
+                injectMultiAccountDaemonAndSmsMonitor(view);
+            }
+
+            @Override
+            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                if (failingUrl != null && failingUrl.equals(LIVE_MEHF_START_URL)) {
+                    view.loadUrl("file:///android_asset/chat.html");
+                }
             }
         });
 
         webView.setWebChromeClient(new WebChromeClient() {
+            // Auto-Grant Camera & Microphone for WebRTC Calls & Selfie Attendance
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
                 runOnUiThread(() -> {
                     try {
+                        requestRequiredRuntimePermissions();
                         request.grant(request.getResources());
                     } catch (Exception ignored) {}
                 });
             }
 
-            // Grants GPS Live Location permission to WebView for Attendance pages
+            // Auto-Grant GPS Live Location for Teacher/Student Attendance Page
             @Override
             public void onGeolocationPermissionsShowPrompt(final String origin, final GeolocationPermissions.Callback callback) {
                 runOnUiThread(() -> {
                     requestRequiredRuntimePermissions();
                     callback.invoke(origin, true, false);
                 });
+            }
+
+            // Support File / Photo Upload across all pages
+            @Override
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                if (MainActivity.this.filePathCallback != null) {
+                    MainActivity.this.filePathCallback.onReceiveValue(null);
+                }
+                MainActivity.this.filePathCallback = filePathCallback;
+                try {
+                    Intent intent = fileChooserParams.createIntent();
+                    startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE);
+                } catch (Exception e) {
+                    MainActivity.this.filePathCallback = null;
+                    return false;
+                }
+                return true;
             }
         });
 
@@ -163,28 +194,42 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == FILE_CHOOSER_RESULT_CODE) {
+            if (filePathCallback == null) return;
+            Uri[] results = null;
+            if (resultCode == Activity.RESULT_OK && data != null && data.getDataString() != null) {
+                results = new Uri[]{Uri.parse(data.getDataString())};
+            }
+            filePathCallback.onReceiveValue(results);
+            filePathCallback = null;
+        } else {
+            super.onActivityResult(requestCode, resultCode, data);
+        }
+    }
+
+    @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
         handleLaunchIntent(intent);
     }
 
-    // Prevents infinite reload loop if chat.html is already open!
+    // Prevents duplicate reload loops if WebView is already on chat.html
     private void handleLaunchIntent(Intent intent) {
-        if (webView == null) return;
-        String currentUrl = webView.getUrl();
-        String targetUrl = (intent != null) ? intent.getStringExtra("target_url") : null;
-
-        if (targetUrl != null) {
+        String currentUrl = webView != null ? webView.getUrl() : null;
+        if (intent != null && intent.getStringExtra("target_url") != null) {
+            String target = intent.getStringExtra("target_url");
+            intent.removeExtra("target_url");
             if (currentUrl == null || !currentUrl.contains("chat.html")) {
-                webView.loadUrl(targetUrl);
+                webView.loadUrl(target);
             }
         } else if (currentUrl == null) {
             webView.loadUrl(LIVE_MEHF_START_URL);
         }
     }
 
-    private void injectMultiAccountDaemonAndSmsEngine(WebView view) {
+    private void injectMultiAccountDaemonAndSmsMonitor(WebView view) {
         String js = "(function() {" +
                 "try {" +
                 "  const savedRaw = localStorage.getItem('mehf_persistent_accounts_v2');" +
@@ -244,9 +289,42 @@ public class MainActivity extends Activity {
                 "  window.__mehfMultiAccountDaemonRunning = true;" +
                 "  import('/firebase-config.js?v=100').then(async (mod) => {" +
                 "    if (!mod || !mod.db) return;" +
-                "    const { doc, collection, query, where, onSnapshot, updateDoc } = await import('[https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js](https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js)');" +
+                "    const { doc, collection, query, where, onSnapshot, updateDoc } = await import('https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js');" +
                 "    const handledCallRooms = new Set();" +
                 "    accs.forEach(acc => {" +
+                "      let prevUserSnap = null;" +
+                "      onSnapshot(doc(mod.db, 'users', acc.docId), (snap) => {" +
+                "        if (!snap.exists()) return;" +
+                "        const cur = snap.data();" +
+                "        const label = (cur.name || acc.name || acc.username) + ' (' + (acc.role || '').toUpperCase() + ')';" +
+                "        if (prevUserSnap && window.AndroidAppBridge) {" +
+                "          if (cur.attendanceStatus !== prevUserSnap.attendanceStatus || cur.lastAttendanceDate !== prevUserSnap.lastAttendanceDate) {" +
+                "            window.AndroidAppBridge.showSystemNotification('हाजिरी अपडेट: ' + label, 'आज की उपस्थिति स्थिति: ' + (cur.attendanceStatus || 'Updated'));" +
+                "          }" +
+                "          if (cur.paidFee !== prevUserSnap.paidFee || cur.dueFee !== prevUserSnap.dueFee) {" +
+                "            window.AndroidAppBridge.showSystemNotification('फीस अपडेट: ' + label, 'फीस खाते में नया अपडेट हुआ है।');" +
+                "          }" +
+                "          if (cur.resultPublished !== prevUserSnap.resultPublished || cur.marksUpdated !== prevUserSnap.marksUpdated) {" +
+                "            window.AndroidAppBridge.showSystemNotification('रिजल्ट जारी: ' + label, 'परीक्षा परिणाम अपडेट किया गया है।');" +
+                "          }" +
+                "          if (cur.admitCardGenerated !== prevUserSnap.admitCardGenerated || cur.admitCardUrl !== prevUserSnap.admitCardUrl) {" +
+                "            window.AndroidAppBridge.showSystemNotification('एडमिट कार्ड जारी: ' + label, 'आपका एडमिट कार्ड तैयार है।');" +
+                "          }" +
+                "        }" +
+                "        prevUserSnap = Object.assign({}, cur);" +
+                "      });" +
+                "      let chatInitLoaded = false;" +
+                "      onSnapshot(query(collection(mod.db, 'chats'), where('receiverId', '==', acc.docId)), (cSnap) => {" +
+                "        if (!chatInitLoaded) { chatInitLoaded = true; return; }" +
+                "        cSnap.docChanges().forEach(change => {" +
+                "          if (change.type === 'added') {" +
+                "            const msg = change.doc.data();" +
+                "            if (msg && (Date.now() - (msg.timestamp || 0) < 30000) && window.AndroidAppBridge) {" +
+                "              window.AndroidAppBridge.showSystemNotification(acc.name + ' के लिए नया संदेश (' + (msg.senderName || 'Notice') + ')', msg.message || msg.msg || 'नया चैट/नोटिस प्राप्त हुआ');" +
+                "            }" +
+                "          }" +
+                "        });" +
+                "      });" +
                 "      if (window.location.pathname.indexOf('chat.html') === -1) {" +
                 "        onSnapshot(doc(mod.db, 'calls', acc.docId), (callSnap) => {" +
                 "          const c = callSnap.data();" +
@@ -255,6 +333,9 @@ public class MainActivity extends Activity {
                 "            localStorage.setItem('mehf_active_account_doc_id_v2', acc.docId);" +
                 "            localStorage.setItem('loggedInUserDocId', acc.docId);" +
                 "            sessionStorage.setItem('loggedInUserDocId', acc.docId);" +
+                "            if (window.AndroidAppBridge) {" +
+                "              window.AndroidAppBridge.triggerIncomingCallRing(acc.name + ' के लिए कॉल: ' + (c.callerName || c.callerId), 'उठाने के लिए टैप करें');" +
+                "            }" +
                 "            window.location.href = '/chat.html?uid=' + encodeURIComponent(acc.docId);" +
                 "          }" +
                 "        });" +
@@ -267,13 +348,17 @@ public class MainActivity extends Activity {
                 "            snap.forEach(d => {" +
                 "              const item = d.data();" +
                 "              const st = String(item.status || 'pending').toLowerCase();" +
+                "              const itemSchool = String(item.schoolId || item.school || item.schoolUsername || 'NA').toLowerCase();" +
+                "              const mySchool = String(acc.username || acc.docId || '').toLowerCase();" +
                 "              if ((st === 'pending' || st === 'queued') && !sentSet.has(d.id)) {" +
-                "                const phone = String(item.phone || item.mobile || item.phoneNumber || item.to || '').trim();" +
-                "                const msg = String(item.message || item.msg || item.text || item.body || '').trim();" +
-                "                if (phone && msg) {" +
-                "                  sentSet.add(d.id);" +
-                "                  const res = window.AndroidSmsBridge.sendDirectSms(phone, msg);" +
-                "                  updateDoc(doc(mod.db, colName, d.id), { status: String(res).startsWith('SENT') ? 'sent' : 'failed', sentAt: Date.now(), gatewayResponse: String(res) }).catch(()=>{});" +
+                "                if (acc.role === 'admin' || itemSchool === 'na' || itemSchool === mySchool) {" +
+                "                  const phone = String(item.phone || item.mobile || item.phoneNumber || item.to || '').trim();" +
+                "                  const msg = String(item.message || item.msg || item.text || item.body || '').trim();" +
+                "                  if (phone && msg) {" +
+                "                    sentSet.add(d.id);" +
+                "                    const res = window.AndroidSmsBridge.sendDirectSms(phone, msg);" +
+                "                    updateDoc(doc(mod.db, colName, d.id), { status: String(res).startsWith('SENT') ? 'sent' : 'failed', sentAt: Date.now(), gatewayResponse: String(res) }).catch(()=>{});" +
+                "                  }" +
                 "                }" +
                 "              }" +
                 "            });" +
@@ -292,12 +377,21 @@ public class MainActivity extends Activity {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm == null) return;
 
-            NotificationChannel callChannel = new NotificationChannel(CALL_CHANNEL_ID, "Incoming Calls & Conferences", NotificationManager.IMPORTANCE_HIGH);
+            NotificationChannel callChannel = new NotificationChannel(
+                    CALL_CHANNEL_ID,
+                    "Incoming Calls & Live Conferences",
+                    NotificationManager.IMPORTANCE_HIGH
+            );
+            callChannel.setDescription("Rings even when screen is locked");
             callChannel.enableVibration(true);
             callChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(callChannel);
 
-            NotificationChannel alertChannel = new NotificationChannel(ALERT_CHANNEL_ID, "School Notices & Alerts", NotificationManager.IMPORTANCE_HIGH);
+            NotificationChannel alertChannel = new NotificationChannel(
+                    ALERT_CHANNEL_ID,
+                    "Attendance, Fee, Result & Admit Card Alerts",
+                    NotificationManager.IMPORTANCE_HIGH
+            );
             alertChannel.enableVibration(true);
             alertChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(alertChannel);
@@ -316,8 +410,10 @@ public class MainActivity extends Activity {
                         am.setMode(AudioManager.MODE_IN_COMMUNICATION);
                         am.setSpeakerphoneOn(true);
                         am.setMicrophoneMute(false);
-                        int maxVol = am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL);
-                        am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVol, 0);
+                        int maxCallVol = am.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL);
+                        am.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxCallVol, 0);
+                        int maxMusicVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                        am.setStreamVolume(AudioManager.STREAM_MUSIC, maxMusicVol, 0);
                     } else {
                         am.setSpeakerphoneOn(false);
                         am.setMode(AudioManager.MODE_NORMAL);
@@ -326,17 +422,16 @@ public class MainActivity extends Activity {
             });
         }
 
-        // Fixed: Never calls startActivity() if already ringing or in foreground, preventing refresh loop!
+        // Fixed: NO startActivity() reload loop here! Only wakes screen & plays ringtone once per call
         @JavascriptInterface
         public void triggerIncomingCallRing(String callerTitle, String subtitle) {
             runOnUiThread(() -> {
                 try {
                     long now = System.currentTimeMillis();
-                    if (isCallCurrentlyRinging && (now - lastRingTriggerTime < 25000)) {
-                        return;
+                    if (now - lastCallRingTriggerTime < 6000) {
+                        return; // Debounce duplicate triggers so phone never freezes or loops
                     }
-                    isCallCurrentlyRinging = true;
-                    lastRingTriggerTime = now;
+                    lastCallRingTriggerTime = now;
 
                     PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
                     if (pm != null) {
@@ -351,15 +446,18 @@ public class MainActivity extends Activity {
                         tts.speak("ध्यान दें, " + callerTitle, TextToSpeech.QUEUE_FLUSH, null, null);
                     }
 
-                    if (activeRingtone != null && activeRingtone.isPlaying()) {
-                        activeRingtone.stop();
-                    }
+                    stopIncomingCallRing();
                     Uri ringUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE);
                     activeRingtone = RingtoneManager.getRingtone(getApplicationContext(), ringUri);
-                    if (activeRingtone != null) activeRingtone.play();
-                    if (vibrator != null) vibrator.vibrate(new long[]{0, 800, 400, 800}, 0);
+                    if (activeRingtone != null) {
+                        activeRingtone.play();
+                    }
+                    if (vibrator != null) {
+                        long[] pattern = {0, 800, 400, 800, 400, 800};
+                        vibrator.vibrate(pattern, 0);
+                    }
 
-                    showHighPriorityNotification(callerTitle, subtitle, 9001, CALL_CHANNEL_ID, null);
+                    showHighPriorityNotification(callerTitle, subtitle, 9001, CALL_CHANNEL_ID, LIVE_MEHF_CHAT_URL);
                 } catch (Exception ignored) {}
             });
         }
@@ -368,9 +466,12 @@ public class MainActivity extends Activity {
         public void stopIncomingCallRing() {
             runOnUiThread(() -> {
                 try {
-                    isCallCurrentlyRinging = false;
-                    if (activeRingtone != null && activeRingtone.isPlaying()) activeRingtone.stop();
-                    if (vibrator != null) vibrator.cancel();
+                    if (activeRingtone != null && activeRingtone.isPlaying()) {
+                        activeRingtone.stop();
+                    }
+                    if (vibrator != null) {
+                        vibrator.cancel();
+                    }
                     NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
                     if (nm != null) nm.cancel(9001);
                 } catch (Exception ignored) {}
@@ -380,7 +481,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void showSystemNotification(String title, String message) {
             runOnUiThread(() -> {
-                if (tts != null && !isCallCurrentlyRinging) {
+                if (tts != null) {
                     tts.speak(title + ". " + message, TextToSpeech.QUEUE_ADD, null, null);
                 }
                 int id = (int) (System.currentTimeMillis() % 100000);
@@ -395,57 +496,63 @@ public class MainActivity extends Activity {
             if (nm == null) return;
 
             Intent intent = new Intent(this, MainActivity.class);
-            if (targetUrl != null) intent.putExtra("target_url", targetUrl);
+            if (targetUrl != null) {
+                intent.putExtra("target_url", targetUrl);
+            }
             intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
             PendingIntent pendingIntent = PendingIntent.getActivity(this, notifId, intent, flags);
 
-            Notification.Builder builder = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                    ? new Notification.Builder(this, channelId)
-                    : new Notification.Builder(this).setPriority(Notification.PRIORITY_MAX);
+            Notification.Builder builder;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                builder = new Notification.Builder(this, channelId);
+            } else {
+                builder = new Notification.Builder(this);
+                builder.setPriority(Notification.PRIORITY_MAX);
+            }
 
             builder.setSmallIcon(android.R.drawable.sym_def_app_icon)
                     .setContentTitle(title)
                     .setContentText(body)
                     .setAutoCancel(true)
-                    .setContentIntent(pendingIntent);
+                    .setContentIntent(pendingIntent)
+                    .setFullScreenIntent(pendingIntent, true);
 
             nm.notify(notifId, builder.build());
         } catch (Exception ignored) {}
     }
 
-    // Android 14 / 15 / 16 Compatible Dual-SIM Aware SMS Gateway
+    // Modern Android 12/14/15/16 Dual-SIM Compatible SMS Gateway Bridge
     public class NativeSmsGatewayBridge {
         @JavascriptInterface
         public String sendDirectSms(String phoneNumber, String messageBody) {
             try {
-                if (phoneNumber == null || messageBody == null) return "ERROR: Empty phone or message";
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
+                        requestRequiredRuntimePermissions();
+                        return "ERROR: SEND_SMS Permission Not Granted";
+                    }
+                }
+
                 String cleanPhone = phoneNumber.replaceAll("[^0-9+]", "");
                 if (cleanPhone.length() == 10) {
                     cleanPhone = "+91" + cleanPhone;
-                }
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-                        requestPermissions(new String[]{Manifest.permission.SEND_SMS, Manifest.permission.READ_PHONE_STATE}, 102);
-                        return "ERROR: SEND_SMS Permission not granted yet";
-                    }
                 }
 
                 SmsManager smsManager;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     smsManager = getApplicationContext().getSystemService(SmsManager.class);
                     if (smsManager == null) smsManager = SmsManager.getDefault();
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                } else {
                     int subId = SubscriptionManager.getDefaultSmsSubscriptionId();
                     if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
                         smsManager = SmsManager.getSmsManagerForSubscriptionId(subId);
                     } else {
                         smsManager = SmsManager.getDefault();
                     }
-                } else {
-                    smsManager = SmsManager.getDefault();
                 }
 
                 ArrayList<String> parts = smsManager.divideMessage(messageBody);
@@ -457,9 +564,10 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Requests only missing permissions on Android 13 / 14 / 15 / 16
+    // Requests only missing permissions so Android 15/16 never blocks the batch
     private void requestRequiredRuntimePermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            List<String> needed = new ArrayList<>();
             String[] allPerms = {
                     Manifest.permission.CAMERA,
                     Manifest.permission.RECORD_AUDIO,
@@ -467,31 +575,45 @@ public class MainActivity extends Activity {
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION,
                     Manifest.permission.SEND_SMS,
-                    Manifest.permission.READ_PHONE_STATE,
-                    Manifest.permission.POST_NOTIFICATIONS
+                    Manifest.permission.READ_PHONE_STATE
             };
-            List<String> needed = new ArrayList<>();
+
             for (String p : allPerms) {
                 if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) {
                     needed.add(p);
                 }
             }
+
+            if (Build.VERSION.SDK_INT >= 33) {
+                if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    needed.add(Manifest.permission.POST_NOTIFICATIONS);
+                }
+            }
+
             if (!needed.isEmpty()) {
-                requestPermissions(needed.toArray(new String[0]), 101);
+                requestPermissions(needed.toArray(new String[0]), PERMISSION_REQUEST_CODE);
             }
         }
     }
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) webView.goBack();
-        else moveTaskToBack(true);
+        if (webView != null && webView.canGoBack()) {
+            webView.goBack();
+        } else {
+            moveTaskToBack(true);
+        }
     }
 
     @Override
     protected void onDestroy() {
-        if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-        if (tts != null) { tts.stop(); tts.shutdown(); }
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
+        }
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+        }
         super.onDestroy();
     }
 }
