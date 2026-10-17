@@ -7,9 +7,11 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.media.AudioManager;
 import android.media.Ringtone;
 import android.media.RingtoneManager;
@@ -17,11 +19,14 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.IBinder;
 import android.os.PowerManager;
 import android.os.Vibrator;
+import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 import android.telephony.SmsManager;
 import android.telephony.SubscriptionManager;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
@@ -41,14 +46,15 @@ import java.util.Locale;
 
 public class MainActivity extends Activity {
 
-    private WebView webView;
-    private PowerManager.WakeLock wakeLock;
-    private Ringtone activeRingtone;
-    private Vibrator vibrator;
-    private TextToSpeech tts;
+    // Static persistent WebView so the app NEVER reloads from 0 when reopened
+    private static WebView persistentWebView;
+    private static PowerManager.WakeLock wakeLock;
+    private static Ringtone activeRingtone;
+    private static Vibrator vibrator;
+    private static TextToSpeech tts;
     private ValueCallback<Uri[]> filePathCallback;
 
-    private long lastCallRingTriggerTime = 0;
+    private static long lastCallRingTriggerTime = 0;
 
     private static final int FILE_CHOOSER_RESULT_CODE = 202;
     private static final int PERMISSION_REQUEST_CODE = 101;
@@ -56,6 +62,7 @@ public class MainActivity extends Activity {
     private static final String LIVE_MEHF_CHAT_URL = "https://mehf.in/chat.html";
     private static final String CALL_CHANNEL_ID = "mehf_incoming_calls_channel";
     private static final String ALERT_CHANNEL_ID = "mehf_activity_alerts_channel";
+    private static final String SERVICE_CHANNEL_ID = "mehf_keep_alive_service_channel";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,7 +81,7 @@ public class MainActivity extends Activity {
         }
 
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
-        if (pm != null) {
+        if (pm != null && (wakeLock == null || !wakeLock.isHeld())) {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MehFoundation::BackgroundWakeLock");
             wakeLock.acquire();
         }
@@ -82,17 +89,35 @@ public class MainActivity extends Activity {
         vibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
         createNotificationChannels();
         requestRequiredRuntimePermissions();
+        requestBatteryOptimizationExemption();
+        startKeepAliveForegroundService();
 
-        tts = new TextToSpeech(this, status -> {
-            if (status == TextToSpeech.SUCCESS) {
-                tts.setLanguage(new Locale("hi", "IN"));
+        if (tts == null) {
+            tts = new TextToSpeech(getApplicationContext(), status -> {
+                if (status == TextToSpeech.SUCCESS) {
+                    tts.setLanguage(new Locale("hi", "IN"));
+                }
+            });
+        }
+
+        // Reuse existing persistent WebView so state, Firebase listeners & chats stay 100% alive in memory
+        if (persistentWebView == null) {
+            persistentWebView = new WebView(getApplicationContext());
+            configureWebView(persistentWebView);
+            persistentWebView.loadUrl(LIVE_MEHF_START_URL);
+        } else {
+            if (persistentWebView.getParent() instanceof ViewGroup) {
+                ((ViewGroup) persistentWebView.getParent()).removeView(persistentWebView);
             }
-        });
+        }
 
-        webView = new WebView(this);
-        setContentView(webView);
+        attachWebChromeAndDownloadHandlers(persistentWebView);
+        setContentView(persistentWebView);
+        handleLaunchIntent(getIntent());
+    }
 
-        WebSettings settings = webView.getSettings();
+    private void configureWebView(WebView wv) {
+        WebSettings settings = wv.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
@@ -111,12 +136,12 @@ public class MainActivity extends Activity {
 
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
-        cookieManager.setAcceptThirdPartyCookies(webView, true);
+        cookieManager.setAcceptThirdPartyCookies(wv, true);
 
-        webView.addJavascriptInterface(new NativeSmsGatewayBridge(), "AndroidSmsBridge");
-        webView.addJavascriptInterface(new NativeAppNotificationBridge(), "AndroidAppBridge");
+        wv.addJavascriptInterface(new NativeSmsGatewayBridge(), "AndroidSmsBridge");
+        wv.addJavascriptInterface(new NativeAppNotificationBridge(), "AndroidAppBridge");
 
-        webView.setWebViewClient(new WebViewClient() {
+        wv.setWebViewClient(new WebViewClient() {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
@@ -131,9 +156,10 @@ public class MainActivity extends Activity {
                 }
             }
         });
+    }
 
-        webView.setWebChromeClient(new WebChromeClient() {
-            // Auto-Grant Camera & Microphone for WebRTC Calls & Selfie Attendance
+    private void attachWebChromeAndDownloadHandlers(WebView wv) {
+        wv.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
                 runOnUiThread(() -> {
@@ -144,7 +170,6 @@ public class MainActivity extends Activity {
                 });
             }
 
-            // Auto-Grant GPS Live Location for Teacher/Student Attendance Page
             @Override
             public void onGeolocationPermissionsShowPrompt(final String origin, final GeolocationPermissions.Callback callback) {
                 runOnUiThread(() -> {
@@ -153,7 +178,6 @@ public class MainActivity extends Activity {
                 });
             }
 
-            // Support File / Photo Upload across all pages
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
                 if (MainActivity.this.filePathCallback != null) {
@@ -171,7 +195,7 @@ public class MainActivity extends Activity {
             }
         });
 
-        webView.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
+        wv.setDownloadListener((url, userAgent, contentDisposition, mimeType, contentLength) -> {
             try {
                 DownloadManager.Request request = new DownloadManager.Request(Uri.parse(url));
                 request.setMimeType(mimeType);
@@ -189,8 +213,30 @@ public class MainActivity extends Activity {
                 startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
             }
         });
+    }
 
-        handleLaunchIntent(getIntent());
+    private void startKeepAliveForegroundService() {
+        try {
+            Intent serviceIntent = new Intent(this, MehfKeepAliveService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent);
+            } else {
+                startService(serviceIntent);
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void requestBatteryOptimizationExemption() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+                if (pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:" + getPackageName()));
+                    startActivity(intent);
+                }
+            }
+        } catch (Exception ignored) {}
     }
 
     @Override
@@ -215,20 +261,20 @@ public class MainActivity extends Activity {
         handleLaunchIntent(intent);
     }
 
-    // Prevents duplicate reload loops if WebView is already on chat.html
     private void handleLaunchIntent(Intent intent) {
-        String currentUrl = webView != null ? webView.getUrl() : null;
+        String currentUrl = persistentWebView != null ? persistentWebView.getUrl() : null;
         if (intent != null && intent.getStringExtra("target_url") != null) {
             String target = intent.getStringExtra("target_url");
             intent.removeExtra("target_url");
             if (currentUrl == null || !currentUrl.contains("chat.html")) {
-                webView.loadUrl(target);
+                persistentWebView.loadUrl(target);
             }
         } else if (currentUrl == null) {
-            webView.loadUrl(LIVE_MEHF_START_URL);
+            persistentWebView.loadUrl(LIVE_MEHF_START_URL);
         }
     }
 
+    // Injects 24x7 Multi-Account Watcher + Universal SIM SMS Auto-Dispatcher
     private void injectMultiAccountDaemonAndSmsMonitor(WebView view) {
         String js = "(function() {" +
                 "try {" +
@@ -319,7 +365,7 @@ public class MainActivity extends Activity {
                 "        cSnap.docChanges().forEach(change => {" +
                 "          if (change.type === 'added') {" +
                 "            const msg = change.doc.data();" +
-                "            if (msg && (Date.now() - (msg.timestamp || 0) < 30000) && window.AndroidAppBridge) {" +
+                "            if (msg && (Date.now() - (msg.timestamp || 0) < 35000) && window.AndroidAppBridge) {" +
                 "              window.AndroidAppBridge.showSystemNotification(acc.name + ' के लिए नया संदेश (' + (msg.senderName || 'Notice') + ')', msg.message || msg.msg || 'नया चैट/नोटिस प्राप्त हुआ');" +
                 "            }" +
                 "          }" +
@@ -340,24 +386,26 @@ public class MainActivity extends Activity {
                 "          }" +
                 "        });" +
                 "      }" +
-                "      if ((acc.role === 'school' || acc.role === 'admin') && window.AndroidSmsBridge && !window.__mehfSimSmsWatcherStarted) {" +
+                "      if ((acc.role === 'school' || acc.role === 'admin') && window.AndroidSmsBridge && !window.__mehfSimSmsWatcherStarted && window.location.pathname.indexOf('chat.html') === -1) {" +
                 "        window.__mehfSimSmsWatcherStarted = true;" +
                 "        const sentSet = new Set();" +
-                "        ['sms_queue', 'sms_logs'].forEach(colName => {" +
+                "        ['sms_logs', 'sms_queue'].forEach(colName => {" +
                 "          onSnapshot(collection(mod.db, colName), (snap) => {" +
                 "            snap.forEach(d => {" +
                 "              const item = d.data();" +
-                "              const st = String(item.status || 'pending').toLowerCase();" +
-                "              const itemSchool = String(item.schoolId || item.school || item.schoolUsername || 'NA').toLowerCase();" +
-                "              const mySchool = String(acc.username || acc.docId || '').toLowerCase();" +
+                "              const st = String(item.status || 'pending').toLowerCase().trim();" +
+                "              const itemSchool = String(item.school || item.schoolId || item.schoolUsername || 'na').toLowerCase().trim();" +
+                "              const myUser = String(acc.username || '').toLowerCase().trim();" +
+                "              const myDoc = String(acc.docId || '').toLowerCase().trim();" +
                 "              if ((st === 'pending' || st === 'queued') && !sentSet.has(d.id)) {" +
-                "                if (acc.role === 'admin' || itemSchool === 'na' || itemSchool === mySchool) {" +
+                "                if (acc.role === 'admin' || itemSchool === 'na' || itemSchool === '' || itemSchool === myUser || itemSchool === myDoc) {" +
                 "                  const phone = String(item.phone || item.mobile || item.phoneNumber || item.to || '').trim();" +
-                "                  const msg = String(item.message || item.msg || item.text || item.body || '').trim();" +
+                "                  const msg = String(item.msg || item.message || item.text || item.body || '').trim();" +
                 "                  if (phone && msg) {" +
                 "                    sentSet.add(d.id);" +
                 "                    const res = window.AndroidSmsBridge.sendDirectSms(phone, msg);" +
-                "                    updateDoc(doc(mod.db, colName, d.id), { status: String(res).startsWith('SENT') ? 'sent' : 'failed', sentAt: Date.now(), gatewayResponse: String(res) }).catch(()=>{});" +
+                "                    const ok = String(res).startsWith('SENT');" +
+                "                    updateDoc(doc(mod.db, colName, d.id), { status: ok ? 'sent' : 'failed', sentAt: Date.now(), gatewayResponse: String(res) }).catch(()=>{});" +
                 "                  }" +
                 "                }" +
                 "              }" +
@@ -395,6 +443,55 @@ public class MainActivity extends Activity {
             alertChannel.enableVibration(true);
             alertChannel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
             nm.createNotificationChannel(alertChannel);
+
+            NotificationChannel serviceChannel = new NotificationChannel(
+                    SERVICE_CHANNEL_ID,
+                    "Meh foundation Background Service",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            serviceChannel.setDescription("Keeps Calls, Notices & Auto-SMS active 24x7");
+            nm.createNotificationChannel(serviceChannel);
+        }
+    }
+
+    // 24x7 Immortal Foreground Service so Android never kills the app or resets WebView to 0
+    public static class MehfKeepAliveService extends Service {
+        @Override
+        public int onStartCommand(Intent intent, int flags, int startId) {
+            try {
+                Intent openIntent = new Intent(this, MainActivity.class);
+                openIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                int pFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pFlags |= PendingIntent.FLAG_IMMUTABLE;
+                PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, openIntent, pFlags);
+
+                Notification.Builder builder;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    builder = new Notification.Builder(this, SERVICE_CHANNEL_ID);
+                } else {
+                    builder = new Notification.Builder(this);
+                }
+
+                Notification notification = builder
+                        .setSmallIcon(android.R.drawable.sym_def_app_icon)
+                        .setContentTitle("Meh foundation Smart Hub Active")
+                        .setContentText("24x7 लाइव कॉल, नोटिस अलर्ट एवं ऑटो-SMS गेटवे चालू है")
+                        .setOngoing(true)
+                        .setContentIntent(pendingIntent)
+                        .build();
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    startForeground(7701, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+                } else {
+                    startForeground(7701, notification);
+                }
+            } catch (Exception ignored) {}
+            return START_STICKY;
+        }
+
+        @Override
+        public IBinder onBind(Intent intent) {
+            return null;
         }
     }
 
@@ -422,14 +519,13 @@ public class MainActivity extends Activity {
             });
         }
 
-        // Fixed: NO startActivity() reload loop here! Only wakes screen & plays ringtone once per call
         @JavascriptInterface
         public void triggerIncomingCallRing(String callerTitle, String subtitle) {
             runOnUiThread(() -> {
                 try {
                     long now = System.currentTimeMillis();
                     if (now - lastCallRingTriggerTime < 6000) {
-                        return; // Debounce duplicate triggers so phone never freezes or loops
+                        return;
                     }
                     lastCallRingTriggerTime = now;
 
@@ -525,7 +621,7 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    // Modern Android 12/14/15/16 Dual-SIM Compatible SMS Gateway Bridge
+    // Modern Android 12/14/15/16 Dual-SIM + PendingIntent Delivery Verified SMS Bridge
     public class NativeSmsGatewayBridge {
         @JavascriptInterface
         public String sendDirectSms(String phoneNumber, String messageBody) {
@@ -537,16 +633,27 @@ public class MainActivity extends Activity {
                     }
                 }
 
-                String cleanPhone = phoneNumber.replaceAll("[^0-9+]", "");
-                if (cleanPhone.length() == 10) {
-                    cleanPhone = "+91" + cleanPhone;
+                if (phoneNumber == null || messageBody == null) {
+                    return "ERROR: Empty phone or message";
                 }
 
-                SmsManager smsManager;
+                // Clean phone number for Indian mobile carriers (+91XXXXXXXXXX or 10-digit)
+                String digitsOnly = phoneNumber.replaceAll("[^0-9]", "");
+                if (digitsOnly.length() > 10 && digitsOnly.startsWith("91")) {
+                    digitsOnly = digitsOnly.substring(digitsOnly.length() - 10);
+                } else if (digitsOnly.length() > 10 && digitsOnly.startsWith("0")) {
+                    digitsOnly = digitsOnly.substring(digitsOnly.length() - 10);
+                }
+                if (digitsOnly.length() < 10) {
+                    return "ERROR: Invalid Phone Number (" + phoneNumber + ")";
+                }
+                String finalAddress = "+91" + digitsOnly;
+
+                SmsManager smsManager = null;
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     smsManager = getApplicationContext().getSystemService(SmsManager.class);
-                    if (smsManager == null) smsManager = SmsManager.getDefault();
-                } else {
+                }
+                if (smsManager == null) {
                     int subId = SubscriptionManager.getDefaultSmsSubscriptionId();
                     if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
                         smsManager = SmsManager.getSmsManagerForSubscriptionId(subId);
@@ -555,8 +662,23 @@ public class MainActivity extends Activity {
                     }
                 }
 
+                int pFlags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    pFlags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+
                 ArrayList<String> parts = smsManager.divideMessage(messageBody);
-                smsManager.sendMultipartTextMessage(cleanPhone, null, parts, null, null);
+                if (parts.size() <= 1) {
+                    PendingIntent sentPI = PendingIntent.getBroadcast(getApplicationContext(), (int) (System.currentTimeMillis() % 10000), new Intent("MEHF_SMS_SENT"), pFlags);
+                    smsManager.sendTextMessage(finalAddress, null, messageBody, sentPI, null);
+                } else {
+                    ArrayList<PendingIntent> sentIntents = new ArrayList<>();
+                    for (int i = 0; i < parts.size(); i++) {
+                        PendingIntent pi = PendingIntent.getBroadcast(getApplicationContext(), i, new Intent("MEHF_SMS_SENT_" + i), pFlags);
+                        sentIntents.add(pi);
+                    }
+                    smsManager.sendMultipartTextMessage(finalAddress, null, parts, sentIntents, null);
+                }
                 return "SENT";
             } catch (Exception e) {
                 return "ERROR: " + e.getMessage();
@@ -564,7 +686,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Requests only missing permissions so Android 15/16 never blocks the batch
     private void requestRequiredRuntimePermissions() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             List<String> needed = new ArrayList<>();
@@ -598,21 +719,19 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
+        if (persistentWebView != null && persistentWebView.canGoBack()) {
+            persistentWebView.goBack();
         } else {
+            // Move app to background instead of destroying Activity so WebView & listeners stay 100% alive
             moveTaskToBack(true);
         }
     }
 
     @Override
     protected void onDestroy() {
-        if (wakeLock != null && wakeLock.isHeld()) {
-            wakeLock.release();
-        }
-        if (tts != null) {
-            tts.stop();
-            tts.shutdown();
+        // Detach persistentWebView cleanly so it is never destroyed when activity restarts
+        if (persistentWebView != null && persistentWebView.getParent() instanceof ViewGroup) {
+            ((ViewGroup) persistentWebView.getParent()).removeView(persistentWebView);
         }
         super.onDestroy();
     }
