@@ -1,4 +1,4 @@
-package in.mehf.smarthub;
+package com.mehf.smsgateway;
 
 import android.Manifest;
 import android.app.Activity;
