@@ -41,6 +41,7 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import androidx.core.app.NotificationCompat;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -61,7 +62,6 @@ public class MainActivity extends Activity {
 
     private static final int FILE_CHOOSER_RESULT_CODE = 202;
     private static final int PERMISSION_REQUEST_CODE = 101;
-    // Start directly on chat.html so real-time background listeners become active immediately
     private static final String LIVE_MEHF_START_URL = "https://mehf.in/chat.html";
     private static final String LIVE_MEHF_LOGIN_URL = "https://mehf.in/login.html";
     private static final String LIVE_MEHF_CHAT_URL = "https://mehf.in/chat.html";
@@ -133,6 +133,7 @@ public class MainActivity extends Activity {
             moveTaskToBack(true);
         }
     }
+
     private void configureWebView(WebView wv) {
         WebSettings settings = wv.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -291,8 +292,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Simultaneous Multi-Account Realtime Listener + Top Switcher + Smart SMS Gateway Manager
-   // Simultaneous Multi-Account Realtime Listener + Top Smart Toggle + SMS Gateway Manager
     private void injectMultiAccountDaemonAndSmsMonitor(WebView view) {
         String js = "(function() {" +
                 "try {" +
@@ -601,12 +600,10 @@ public class MainActivity extends Activity {
         }
     }
 
-    // 24x7 Immortal Foreground Service so Android never kills the app or resets WebView to 0
-   // Service ke andar onTaskRemoved jodh dein taaki swipe karke hatane par bhi background me chalta rahe
     public static class MehfKeepAliveService extends android.app.Service {
         @Override
         public int onStartCommand(Intent intent, int flags, int startId) {
-            String channelId = "mehf_keep_alive_channel";
+            String channelId = "mehf_keep_alive_service_channel";
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 NotificationChannel channel = new NotificationChannel(
                         channelId,
@@ -624,14 +621,17 @@ public class MainActivity extends Activity {
                     .setPriority(NotificationCompat.PRIORITY_LOW)
                     .build();
 
-            startForeground(1001, notification);
-            return START_STICKY; // App ko restart rakhta hai agar OS kill kare
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(1001, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            } else {
+                startForeground(1001, notification);
+            }
+            return START_STICKY;
         }
 
         @Override
         public void onTaskRemoved(Intent rootIntent) {
             super.onTaskRemoved(rootIntent);
-            // Jab user app ko recent apps se swipe karke hataye, tab bhi service ko restart karein
             Intent restartServiceIntent = new Intent(getApplicationContext(), MehfKeepAliveService.class);
             restartServiceIntent.setPackage(getPackageName());
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -647,7 +647,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    // Phone Switch Off hokar On (Reboot) hone par App aur WebView ko 24x7 Auto-Start karne wala Receiver
     public static class BootReceiver extends BroadcastReceiver {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -660,7 +659,6 @@ public class MainActivity extends Activity {
                 "com.htc.intent.action.QUICKBOOT_POWERON".equals(action)) {
 
                 try {
-                    // 1. Keep-Alive Foreground Service turant chalu karein
                     Intent serviceIntent = new Intent(context, MehfKeepAliveService.class);
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                         context.startForegroundService(serviceIntent);
@@ -668,7 +666,6 @@ public class MainActivity extends Activity {
                         context.startService(serviceIntent);
                     }
 
-                    // 2. MainActivity (persistentWebView + chat.html) ko background mode mein launch karein
                     Intent activityIntent = new Intent(context, MainActivity.class);
                     activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                     activityIntent.putExtra("auto_boot", true);
@@ -804,7 +801,6 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    // Modern Android 12/14/15/16 Dual-SIM + PendingIntent Delivery Verified SMS Bridge
     public class NativeSmsGatewayBridge {
         @JavascriptInterface
         public String sendDirectSms(String phoneNumber, String messageBody) {
@@ -903,16 +899,11 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         if (persistentWebView != null) {
             String currentUrl = persistentWebView.getUrl();
-            // 1. If currently on chat.html or login.html, minimize to background so chat.html stays alive
             if (currentUrl != null && (currentUrl.contains("chat.html") || currentUrl.contains("login.html"))) {
                 moveTaskToBack(true);
-            } 
-            // 2. Otherwise go back step-by-step (kramanushar)
-            else if (persistentWebView.canGoBack()) {
+            } else if (persistentWebView.canGoBack()) {
                 persistentWebView.goBack();
-            } 
-            // 3. If no history left and not on chat.html, return to chat.html before minimizing
-            else {
+            } else {
                 persistentWebView.loadUrl(LIVE_MEHF_CHAT_URL);
             }
         } else {
@@ -922,7 +913,6 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        // Detach persistentWebView cleanly so it is never destroyed when activity restarts
         if (persistentWebView != null && persistentWebView.getParent() instanceof ViewGroup) {
             ((ViewGroup) persistentWebView.getParent()).removeView(persistentWebView);
         }
