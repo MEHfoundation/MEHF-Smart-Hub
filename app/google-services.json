@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "650295421487",
+    "project_id": "trail-8d03b",
+    "storage_bucket": "trail-8d03b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:650295421487:android:14e2cad3d40c69dcfdf4da",
+        "android_client_info": {
+          "package_name": "com.mehf.smsgateway"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBN_BgKx1PlJJFwVNRiPV9t9E2hlHb4sk4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
