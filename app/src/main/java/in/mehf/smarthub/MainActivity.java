@@ -27,6 +27,7 @@ import android.os.Vibrator;
 import android.provider.Settings;
 import android.speech.tts.TextToSpeech;
 import android.telephony.SmsManager;
+import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -340,7 +341,7 @@ public class MainActivity extends Activity {
                 "    sessionStorage.setItem('mehf_landed_chat_first', '1');" +
                 "  }" +
                 "" +
-               "  /* 1. Top Smart Toggle Button (Chat <-> Dashboard) - SMS Panel Removed */" +
+                "  /* 1. Top Smart Toggle Button (Chat <-> Dashboard) - SMS Panel Removed */" +
                 "  if (effectiveId && path.indexOf('login.html') === -1 && !document.getElementById('mehfTopNavSwitcher')) {" +
                 "    const topBar = document.createElement('div');" +
                 "    topBar.id = 'mehfTopNavSwitcher';" +
@@ -796,7 +797,7 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
-    // Modern Dual-SIM & Specific SubId SMS Dispatcher Bridge (Error-Free)
+    // Modern Dual-SIM & Specific SubId SMS Dispatcher Bridge (100% Standard Android SDK)
     public class NativeSmsGatewayBridge {
         @JavascriptInterface
         public String sendDirectSms(String phoneNumber, String messageBody) {
@@ -830,21 +831,30 @@ public class MainActivity extends Activity {
                 String finalAddress = "+91" + digitsOnly;
 
                 SmsManager smsManager = null;
-                
-                // Safe Dual-SIM Resolution via Subscription IDs
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+
+                // Safe Dual-SIM Resolution via Public SubscriptionInfo List
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                     try {
                         SubscriptionManager subManager = (SubscriptionManager) getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
                         if (subManager != null && checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
-                            int[] subIds = subManager.getActiveSubscriptionIdList();
-                            if (subIds != null && subIds.length > 0) {
-                                int selectedSubId = subIds[0]; // Default to first SIM
-                                if (simSlotIndex == 1 && subIds.length > 1) {
-                                    selectedSubId = subIds[1]; // Use second SIM if requested and available
-                                } else if (simSlotIndex == 0 && subIds.length > 0) {
-                                    selectedSubId = subIds[0];
+                            List<SubscriptionInfo> subList = subManager.getActiveSubscriptionInfoList();
+                            if (subList != null && !subList.isEmpty()) {
+                                SubscriptionInfo targetSub = null;
+                                if (simSlotIndex >= 0) {
+                                    for (SubscriptionInfo info : subList) {
+                                        if (info.getSimSlotIndex() == simSlotIndex) {
+                                            targetSub = info;
+                                            break;
+                                        }
+                                    }
+                                    if (targetSub == null && simSlotIndex < subList.size()) {
+                                        targetSub = subList.get(simSlotIndex);
+                                    }
                                 }
-                                
+                                if (targetSub == null) {
+                                    targetSub = subList.get(0);
+                                }
+                                int selectedSubId = targetSub.getSubscriptionId();
                                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                                     SmsManager baseMgr = getApplicationContext().getSystemService(SmsManager.class);
                                     if (baseMgr != null) {
@@ -859,9 +869,13 @@ public class MainActivity extends Activity {
                 }
 
                 if (smsManager == null) {
-                    int defaultSubId = SubscriptionManager.getDefaultSmsSubscriptionId();
-                    if (defaultSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
-                        smsManager = SmsManager.getSmsManagerForSubscriptionId(defaultSubId);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                        int defaultSubId = SubscriptionManager.getDefaultSmsSubscriptionId();
+                        if (defaultSubId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
+                            smsManager = SmsManager.getSmsManagerForSubscriptionId(defaultSubId);
+                        } else {
+                            smsManager = SmsManager.getDefault();
+                        }
                     } else {
                         smsManager = SmsManager.getDefault();
                     }
@@ -889,8 +903,8 @@ public class MainActivity extends Activity {
                 return "ERROR: " + e.getMessage();
             }
         }
-    }        
-private String sendSmsWithSubscription(String phone, String msg, int slot) {
+
+        private String sendSmsWithSubscription(String phone, String msg, int slot) {
             return sendDirectSmsWithSim(phone, msg, slot);
         }
     }
