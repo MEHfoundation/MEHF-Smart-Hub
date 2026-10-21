@@ -1,5 +1,7 @@
 plugins {
     id 'com.android.application'
+    // 1. Google Services plugin yahan add karein (Firebase ke liye zaroori hai)
+    id 'com.google.gms.google-services'
 }
 
 android {
@@ -30,4 +32,7 @@ android {
 }
 
 dependencies {
+    // 2. Firebase BOM aur Cloud Messaging dependency jodein
+    implementation platform('com.google.firebase:firebase-bom:32.8.1')
+    implementation 'com.google.firebase:firebase-messaging'
 }
