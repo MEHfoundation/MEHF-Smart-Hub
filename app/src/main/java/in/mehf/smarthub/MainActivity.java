@@ -73,6 +73,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // Lock screen par call / alerts uthane ke liye flags
         getWindow().addFlags(
                 WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON |
                 WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD |
@@ -85,6 +86,7 @@ public class MainActivity extends Activity {
             setTurnScreenOn(true);
         }
 
+        // Background WakeLock taaki app deep sleep mein na jaye
         PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
         if (pm != null && (wakeLock == null || !wakeLock.isHeld())) {
             wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MehFoundation::BackgroundWakeLock");
@@ -97,6 +99,7 @@ public class MainActivity extends Activity {
         requestBatteryOptimizationExemption();
         startKeepAliveForegroundService();
 
+        // TextToSpeech initialization (Hindi voice support)
         if (tts == null) {
             tts = new TextToSpeech(getApplicationContext(), status -> {
                 if (status == TextToSpeech.SUCCESS) {
@@ -124,13 +127,12 @@ public class MainActivity extends Activity {
         setContentView(persistentWebView);
         handleLaunchIntent(getIntent());
 
-        // Agar phone reboot hone par BootReceiver ne app ko auto-start kiya hai, toh WebView load karke background mein bhej dein
+        // Agar phone reboot hone par BootReceiver ne app ko auto-start kiya hai, toh background mein rakhna
         if (getIntent() != null && getIntent().getBooleanExtra("auto_boot", false)) {
             getIntent().removeExtra("auto_boot");
             moveTaskToBack(true);
         }
     }
-
     private void configureWebView(WebView wv) {
         WebSettings settings = wv.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -290,6 +292,7 @@ public class MainActivity extends Activity {
     }
 
     // Simultaneous Multi-Account Realtime Listener + Top Switcher + Smart SMS Gateway Manager
+   // Simultaneous Multi-Account Realtime Listener + Top Smart Toggle + SMS Gateway Manager
     private void injectMultiAccountDaemonAndSmsMonitor(WebView view) {
         String js = "(function() {" +
                 "try {" +
@@ -324,79 +327,74 @@ public class MainActivity extends Activity {
                 "  const path = window.location.pathname;" +
                 "  const redirects = { admin: '/admin-dashboard.html', school: '/school-dashboard.html', teacher: '/teacher-dashboard.html', student: '/student-dashboard.html', volunteer: '/volunteer-dashboard.html', driver: '/transport-dashboard.html' };" +
                 "" +
-                "  /* 1. Login check & Direct Redirect to chat.html after Login */" +
-                /* 2. Top Smart Toggle Button (Chat <-> Dashboard) & SMS Panel */
-  if (effectiveId && path.indexOf('login.html') === -1 && !document.getElementById('mehfTopNavSwitcher')) {
-    const topBar = document.createElement('div');
-    topBar.id = 'mehfTopNavSwitcher';
-    topBar.style.cssText = 'position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:999995;background:rgba(15,23,42,0.95);border:1.5px solid #38bdf8;border-radius:999px;padding:4px 12px;display:flex;align-items:center;gap:8px;box-shadow:0 6px 20px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;white-space:nowrap;';
-    
-    if (!document.getElementById('mehfBodyStylePatcher')) {
-      const bStyle = document.createElement('style');
-      bStyle.id = 'mehfBodyStylePatcher';
-      bStyle.innerHTML = 'body { padding-top: 52px !important; padding-bottom: 20px !important; }';
-      document.head.appendChild(bStyle);
-    }
-
-    const isChatPage = path.indexOf('chat.html') !== -1;
-    const dashUrl = redirects[effectiveRole] || '/admin-dashboard.html';
-    
-    let navHtml = '';
-    if (isChatPage) {
-      navHtml = `<a href='${dashUrl}' id='mehfSwitchDashBtn' style='color:#fde68a;font-size:11px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:rgba(56,189,248,0.2);'>📊 डैशबोर्ड पर जाएं</a>`;
-    } else {
-      navHtml = `<a href='/chat.html' style='color:#fde68a;font-size:11px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:rgba(56,189,248,0.2);'>💬 चैट पर जाएं</a>`;
-    }
-
-    if (effectiveRole === 'admin' || effectiveRole === 'school') {
-      navHtml += `<span style='color:#475569;font-size:10px;'>|</span>` +
-                 `<button id='mehfOpenSmsModalBtn' style='background:rgba(34,197,94,0.2);color:#4ade80;border:1px solid #22c55e;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;cursor:pointer;'>📩 SMS पैनल (<span id='mehfSmsBadgeCount'>0</span>)</button>`;
-    }
-    topBar.innerHTML = navHtml;
-    document.body.appendChild(topBar);
-
-    const dBtn = document.getElementById('mehfSwitchDashBtn');
-    if (dBtn) {
-      dBtn.addEventListener('click', function() {
-        sessionStorage.setItem('mehf_landed_chat_first', '1');
-      });
-    }
-    const smsBtn = document.getElementById('mehfOpenSmsModalBtn');
-    if (smsBtn) {
-      smsBtn.addEventListener('click', function() {
-        if (window.__mehfToggleSmsManagerModal) window.__mehfToggleSmsManagerModal();
-      });
-    }
-  }
-
-  /* 3. Bottom Multi-Account Switcher (KEVAL Dashboard screen par dikhega, Chat par nahi) */
-  if (accs.length > 0 && path.indexOf('login.html') === -1 && path.indexOf('chat.html') === -1 && !document.getElementById('mehfFloatingAccountSwitcher')) {
-    const bar = document.createElement('div');
-    bar.id = 'mehfFloatingAccountSwitcher';
-    bar.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:999990;background:rgba(15,23,42,0.95);border:1.5px solid #fbbf24;border-radius:999px;padding:4px 10px;display:flex;align-items:center;gap:6px;box-shadow:0 10px 25px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;';
-    let opts = accs.map(a => `<option value='${a.docId}' ${a.docId === effectiveId ? 'selected' : ''}>👤 ${a.name} (${a.role.toUpperCase()})</option>`).join('');
-    opts += `<option value='__ADD__'>➕ नया खाता...</option>`;
-    bar.innerHTML = `<span style='width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;'></span>` +
-                    `<select id='mehfGlobalAccSel' style='background:transparent;color:#fde68a;border:none;font-size:10px;font-weight:800;outline:none;max-width:130px;'>${opts}</select>`;
-    document.body.appendChild(bar);
-    
-    document.getElementById('mehfGlobalAccSel').addEventListener('change', function() {
-      if (this.value === '__ADD__') { window.location.href = '/login.html?add=1'; return; }
-      const target = accs.find(a => a.docId === this.value);
-      if (target) {
-        localStorage.setItem('mehf_active_account_doc_id_v2', target.docId);
-        localStorage.setItem('loggedInUserDocId', target.docId);
-        localStorage.setItem('loggedInUserUsername', target.username);
-        localStorage.setItem('loggedInUserRole', target.role);
-        localStorage.setItem('loggedInUserName', target.name);
-        sessionStorage.setItem('loggedInUserDocId', target.docId);
-        sessionStorage.setItem('loggedInUserUsername', target.username);
-        sessionStorage.setItem('loggedInUserRole', target.role);
-        sessionStorage.setItem('loggedInUserName', target.name);
-        window.location.href = '/chat.html';
-      }
-    });
-  }                "" +
+                "  if (!effectiveId && path.indexOf('login.html') === -1) {" +
+                "    window.location.href = '/login.html';" +
+                "    return;" +
+                "  }" +
+                "  if (path.indexOf('login.html') !== -1) {" +
+                "    sessionStorage.removeItem('mehf_landed_chat_first');" +
+                "  } else if (effectiveId && path.indexOf('dashboard') !== -1 && !sessionStorage.getItem('mehf_landed_chat_first')) {" +
+                "    sessionStorage.setItem('mehf_landed_chat_first', '1');" +
+                "    window.location.replace('/chat.html');" +
+                "    return;" +
+                "  } else if (path.indexOf('chat.html') !== -1) {" +
+                "    sessionStorage.setItem('mehf_landed_chat_first', '1');" +
+                "  }" +
+                "" +
+                "  /* 1. Top Smart Toggle Button (Chat <-> Dashboard) & SMS Panel */" +
+                "  if (effectiveId && path.indexOf('login.html') === -1 && !document.getElementById('mehfTopNavSwitcher')) {" +
+                "    const topBar = document.createElement('div');" +
+                "    topBar.id = 'mehfTopNavSwitcher';" +
+                "    topBar.style.cssText = 'position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:999995;background:rgba(15,23,42,0.95);border:1.5px solid #38bdf8;border-radius:999px;padding:4px 12px;display:flex;align-items:center;gap:8px;box-shadow:0 6px 20px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;white-space:nowrap;';" +
+                "    if (!document.getElementById('mehfBodyStylePatcher')) {" +
+                "      const bStyle = document.createElement('style');" +
+                "      bStyle.id = 'mehfBodyStylePatcher';" +
+                "      bStyle.innerHTML = 'body { padding-top: 52px !important; padding-bottom: 20px !important; }';" +
+                "      document.head.appendChild(bStyle);" +
+                "    }" +
+                "    const isChatPage = path.indexOf('chat.html') !== -1;" +
+                "    const dashUrl = redirects[effectiveRole] || '/admin-dashboard.html';" +
+                "    let navHtml = isChatPage ? " +
+                "      \"<a href='\" + dashUrl + \"' id='mehfSwitchDashBtn' style='color:#fde68a;font-size:11px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:rgba(56,189,248,0.2);'>📊 डैशबोर्ड पर जाएं</a>\" :" +
+                "      \"<a href='/chat.html' style='color:#fde68a;font-size:11px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:rgba(56,189,248,0.2);'>💬 चैट पर जाएं</a>\";" +
+                "    if (effectiveRole === 'admin' || effectiveRole === 'school') {" +
+                "      navHtml += \"<span style='color:#475569;font-size:10px;'>|</span><button id='mehfOpenSmsModalBtn' style='background:rgba(34,197,94,0.2);color:#4ade80;border:1.5px solid #22c55e;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;cursor:pointer;'>📩 SMS पैनल (<span id='mehfSmsBadgeCount'>0</span>)</button>\";" +
+                "    }" +
+                "    topBar.innerHTML = navHtml;" +
+                "    document.body.appendChild(topBar);" +
+                "    const dBtn = document.getElementById('mehfSwitchDashBtn');" +
+                "    if (dBtn) { dBtn.addEventListener('click', function() { sessionStorage.setItem('mehf_landed_chat_first', '1'); }); }" +
+                "    const smsBtn = document.getElementById('mehfOpenSmsModalBtn');" +
+                "    if (smsBtn) { smsBtn.addEventListener('click', function() { if (window.__mehfToggleSmsManagerModal) window.__mehfToggleSmsManagerModal(); }); }" +
+                "  }" +
+                "" +
+                "  /* 2. Bottom Multi-Account Switcher (KEVAL Dashboard screen par dikhega, Chat par nahi) */" +
+                "  if (accs.length > 0 && path.indexOf('login.html') === -1 && path.indexOf('chat.html') === -1 && !document.getElementById('mehfFloatingAccountSwitcher')) {" +
+                "    const bar = document.createElement('div');" +
+                "    bar.id = 'mehfFloatingAccountSwitcher';" +
+                "    bar.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:999990;background:rgba(15,23,42,0.95);border:1.5px solid #fbbf24;border-radius:999px;padding:4px 10px;display:flex;align-items:center;gap:6px;box-shadow:0 10px 25px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;';" +
+                "    let opts = accs.map(a => \"<option value='\" + a.docId + \"' \" + (a.docId === effectiveId ? \"selected\" : \"\") + \">👤 \" + a.name + \" (\" + a.role.toUpperCase() + \")</option>\").join('');" +
+                "    opts += \"<option value='__ADD__'>➕ नया खाता...</option>\";" +
+                "    bar.innerHTML = \"<span style='width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;'></span><select id='mehfGlobalAccSel' style='background:transparent;color:#fde68a;border:none;font-size:10px;font-weight:800;outline:none;max-width:130px;'>\" + opts + \"</select>\";" +
+                "    document.body.appendChild(bar);" +
+                "    document.getElementById('mehfGlobalAccSel').addEventListener('change', function() {" +
+                "      if (this.value === '__ADD__') { window.location.href = '/login.html?add=1'; return; }" +
+                "      const target = accs.find(a => a.docId === this.value);" +
+                "      if (target) {" +
+                "        localStorage.setItem('mehf_active_account_doc_id_v2', target.docId);" +
+                "        localStorage.setItem('loggedInUserDocId', target.docId);" +
+                "        localStorage.setItem('loggedInUserUsername', target.username);" +
+                "        localStorage.setItem('loggedInUserRole', target.role);" +
+                "        localStorage.setItem('loggedInUserName', target.name);" +
+                "        sessionStorage.setItem('loggedInUserDocId', target.docId);" +
+                "        sessionStorage.setItem('loggedInUserUsername', target.username);" +
+                "        sessionStorage.setItem('loggedInUserRole', target.role);" +
+                "        sessionStorage.setItem('loggedInUserName', target.name);" +
+                "        window.location.href = '/chat.html';" +
+                "      }" +
+                "    });" +
+                "  }" +
+                "" +
                 "  if (window.__mehfMultiAccountDaemonRunning) return;" +
                 "  window.__mehfMultiAccountDaemonRunning = true;" +
                 "" +
@@ -410,7 +408,6 @@ public class MainActivity extends Activity {
                 "    const handledCallRooms = new Set();" +
                 "    window.__mehfSmsItemsMap = new Map();" +
                 "" +
-                "    /* Helper function to send a single SMS item */" +
                 "    window.__mehfSendSingleSmsItem = async function(itemKey) {" +
                 "      const entry = window.__mehfSmsItemsMap.get(itemKey);" +
                 "      if (!entry || !window.AndroidSmsBridge) return false;" +
@@ -424,7 +421,6 @@ public class MainActivity extends Activity {
                 "      return ok;" +
                 "    };" +
                 "" +
-                "    /* Helper function to ignore a failed SMS item */" +
                 "    window.__mehfIgnoreSingleSmsItem = async function(itemKey) {" +
                 "      const entry = window.__mehfSmsItemsMap.get(itemKey);" +
                 "      if (!entry) return;" +
@@ -434,7 +430,6 @@ public class MainActivity extends Activity {
                 "      }).catch(()=>{});" +
                 "    };" +
                 "" +
-                "    /* Helper function to send ALL Pending SMS at once (Excludes Failed!) */" +
                 "    window.__mehfSendAllPendingSmsOnly = async function() {" +
                 "      for (const [key, entry] of window.__mehfSmsItemsMap.entries()) {" +
                 "        if (entry.status === 'pending' || entry.status === 'queued') {" +
@@ -443,7 +438,6 @@ public class MainActivity extends Activity {
                 "      }" +
                 "    };" +
                 "" +
-                "    /* Render SMS Manager Modal UI (Bulk Pending & Individual Failed) */" +
                 "    window.__mehfRenderSmsModalContent = function() {" +
                 "      const badge = document.getElementById('mehfSmsBadgeCount');" +
                 "      let pendingList = [];" +
@@ -453,37 +447,15 @@ public class MainActivity extends Activity {
                 "        else if (val.status === 'failed') failedList.push({ key, ...val });" +
                 "      });" +
                 "      if (badge) badge.textContent = (pendingList.length + failedList.length);" +
-                "" +
-                "      /* Patch existing webpage DOM buttons if user is viewing dashboard SMS table */" +
-                "      document.querySelectorAll('button, a').forEach(btn => {" +
-                "        const txt = (btn.innerText || '').toLowerCase();" +
-                "        if ((txt.includes('pending') && txt.includes('failed')) || (txt.includes('retry') && txt.includes('all'))) {" +
-                "          if (!btn.dataset.mehfPatched) {" +
-                "            btn.dataset.mehfPatched = '1';" +
-                "            btn.innerText = '📤 सभी Pending SMS भेजें (केवल Pending)';" +
-                "            btn.onclick = function(e) { e.preventDefault(); e.stopPropagation(); window.__mehfSendAllPendingSmsOnly(); };" +
-                "          }" +
-                "        }" +
-                "      });" +
-                "" +
                 "      const container = document.getElementById('mehfSmsModalBody');" +
                 "      if (!container) return;" +
-                "      let html = `<div style='margin-bottom:14px;padding:10px;background:rgba(30,41,59,0.9);border:1px solid #38bdf8;border-radius:10px;display:flex;justify-content:space-between;align-items:center;'>` +" +
-                "                 `<div><div style='color:#38bdf8;font-weight:800;font-size:13px;'>⏳ Pending SMS: ${pendingList.length}</div><div style='color:#94a3b8;font-size:11px;'>ऑटो-सेंड चालू है। फँसने पर एक साथ भेजें:</div></div>` +" +
-                "                 `<button onclick='window.__mehfSendAllPendingSmsOnly()' ${pendingList.length === 0 ? 'disabled' : ''} style='background:${pendingList.length > 0 ? \"#0284c7\" : \"#334155\"};color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:800;cursor:pointer;'>📤 सभी Pending भेजें</button>` +" +
-                "                 `</div>`;" +
-                "" +
-                "      html += `<div style='color:#f87171;font-weight:800;font-size:13px;margin-bottom:8px;'>⚠️ Failed SMS (${failedList.length}) - प्रत्येक को मैन्युअली भेजें या इग्नोर करें:</div>`;" +
+                "      let html = \"<div style='margin-bottom:14px;padding:10px;background:rgba(30,41,59,0.9);border:1px solid #38bdf8;border-radius:10px;display:flex;justify-content:space-between;align-items:center;'><div><div style='color:#38bdf8;font-weight:800;font-size:13px;'>⏳ Pending SMS: \" + pendingList.length + \"</div></div><button onclick='window.__mehfSendAllPendingSmsOnly()' \" + (pendingList.length === 0 ? \"disabled\" : \"\") + \" style='background:\" + (pendingList.length > 0 ? \"#0284c7\" : \"#334155\") + \";color:#fff;border:none;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:800;cursor:pointer;'>📤 सभी Pending भेजें</button></div>\";" +
+                "      html += \"<div style='color:#f87171;font-weight:800;font-size:13px;margin-bottom:8px;'>⚠️ Failed SMS (\" + failedList.length + \"):</div>\";" +
                 "      if (failedList.length === 0) {" +
-                "        html += `<div style='color:#64748b;font-size:12px;text-align:center;padding:12px;background:rgba(15,23,42,0.6);border-radius:8px;'>कोई Failed SMS नहीं है।</div>`;" +
+                "        html += \"<div style='color:#64748b;font-size:12px;text-align:center;padding:12px;background:rgba(15,23,42,0.6);border-radius:8px;'>कोई Failed SMS नहीं है।</div>\";" +
                 "      } else {" +
                 "        failedList.forEach(item => {" +
-                "          html += `<div style='margin-bottom:8px;padding:9px;background:rgba(15,23,42,0.85);border:1px solid #ef4444;border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;'>` +" +
-                "                  `<div style='flex:1;overflow:hidden;'><div style='color:#fde68a;font-weight:800;font-size:12px;'>📞 ${item.phone}</div><div style='color:#cbd5e1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>${item.msg}</div></div>` +" +
-                "                  `<div style='display:flex;gap:5px;'>` +" +
-                "                  `<button onclick=\"window.__mehfSendSingleSmsItem('${item.key}')\" style='background:#16a34a;color:#fff;border:none;border-radius:6px;padding:5px 9px;font-size:11px;font-weight:800;cursor:pointer;'>🔄 Send</button>` +" +
-                "                  `<button onclick=\"window.__mehfIgnoreSingleSmsItem('${item.key}')\" style='background:#475569;color:#cbd5e1;border:none;border-radius:6px;padding:5px 8px;font-size:11px;font-weight:700;cursor:pointer;'>✖ Ignore</button>` +" +
-                "                  `</div></div>`;" +
+                "          html += \"<div style='margin-bottom:8px;padding:9px;background:rgba(15,23,42,0.85);border:1px solid #ef4444;border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;'><div style='flex:1;overflow:hidden;'><div style='color:#fde68a;font-weight:800;font-size:12px;'>📞 \" + item.phone + \"</div><div style='color:#cbd5e1;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>\" + item.msg + \"</div></div><div style='display:flex;gap:5px;'><button onclick=\\\"window.__mehfSendSingleSmsItem('\" + item.key + \"')\\\" style='background:#16a34a;color:#fff;border:none;border-radius:6px;padding:5px 9px;font-size:11px;font-weight:800;cursor:pointer;'>🔄 Send</button><button onclick=\\\"window.__mehfIgnoreSingleSmsItem('\" + item.key + \"')\\\" style='background:#475569;color:#cbd5e1;border:none;border-radius:6px;padding:5px 8px;font-size:11px;font-weight:700;cursor:pointer;'>✖ Ignore</button></div></div>\";" +
                 "        });" +
                 "      }" +
                 "      container.innerHTML = html;" +
@@ -499,13 +471,7 @@ public class MainActivity extends Activity {
                 "      modal = document.createElement('div');" +
                 "      modal.id = 'mehfSmsManagerModal';" +
                 "      modal.style.cssText = 'position:fixed;inset:0;z-index:999999;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;padding:16px;font-family:sans-serif;';" +
-                "      modal.innerHTML = `<div style='width:100%;max-width:440px;max-height:82vh;background:#0f172a;border:1.5px solid #38bdf8;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 15px 35px rgba(0,0,0,0.7);'>` +" +
-                "                        `<div style='padding:12px 15px;background:#1e293b;border-bottom:1px solid #334155;display:flex;justify-content:space-between;align-items:center;'>` +" +
-                "                        `<span style='color:#fde68a;font-weight:900;font-size:14px;'>📩 MEHF Smart SMS Gateway</span>` +" +
-                "                        `<button onclick=\"document.getElementById('mehfSmsManagerModal').style.display='none'\" style='background:transparent;color:#94a3b8;border:none;font-size:16px;font-weight:900;cursor:pointer;'>✕</button>` +" +
-                "                        `</div>` +" +
-                "                        `<div id='mehfSmsModalBody' style='padding:14px;overflow-y:auto;flex:1;'></div>` +" +
-                "                        `</div>`;" +
+                "      modal.innerHTML = \"<div style='width:100%;max-width:440px;max-height:82vh;background:#0f172a;border:1.5px solid #38bdf8;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 15px 35px rgba(0,0,0,0.7);'><div style='padding:12px 15px;background:#1e293b;border-bottom:1px solid #334155;display:flex;justify-content:space-between;align-items:center;'><span style='color:#fde68a;font-weight:900;font-size:14px;'>📩 MEHF Smart SMS Gateway</span><button onclick=\\\"document.getElementById('mehfSmsManagerModal').style.display='none'\\\" style='background:transparent;color:#94a3b8;border:none;font-size:16px;font-weight:900;cursor:pointer;'>✕</button></div><div id='mehfSmsModalBody' style='padding:14px;overflow-y:auto;flex:1;'></div></div>\";" +
                 "      document.body.appendChild(modal);" +
                 "      window.__mehfRenderSmsModalContent();" +
                 "    };" +
@@ -546,7 +512,6 @@ public class MainActivity extends Activity {
                 "        });" +
                 "      });" +
                 "" +
-                "      /* Always listen for incoming calls even on chat.html so native ringtone & wake lock trigger reliably */" +
                 "      onSnapshot(doc(mod.db, 'calls', acc.docId), (callSnap) => {" +
                 "        const c = callSnap.data();" +
                 "        if (c && c.roomName && !handledCallRooms.has(c.roomName) && (c.type === 'call_offer' || c.type === 'conference_invite') && (Date.now() - (c.timestamp || 0) < 45000)) {" +
@@ -563,7 +528,6 @@ public class MainActivity extends Activity {
                 "        }" +
                 "      });" +
                 "" +
-                "      /* 24x7 SMS Gateway Watcher: Works on ALL pages including chat.html! */" +
                 "      if ((acc.role === 'school' || acc.role === 'admin') && window.AndroidSmsBridge && !window.__mehfSimSmsWatcherStarted) {" +
                 "        window.__mehfSimSmsWatcherStarted = true;" +
                 "        const autoAttemptedSet = new Set();" +
@@ -585,7 +549,6 @@ public class MainActivity extends Activity {
                 "                  } else {" +
                 "                    window.__mehfSmsItemsMap.delete(itemKey);" +
                 "                  }" +
-                "                  /* Auto-send ONLY pending/queued SMS automatically */" +
                 "                  if ((st === 'pending' || st === 'queued') && !autoAttemptedSet.has(itemKey)) {" +
                 "                    autoAttemptedSet.add(itemKey);" +
                 "                    window.__mehfSendSingleSmsItem(itemKey);" +
@@ -639,42 +602,47 @@ public class MainActivity extends Activity {
     }
 
     // 24x7 Immortal Foreground Service so Android never kills the app or resets WebView to 0
-    public static class MehfKeepAliveService extends Service {
+   // Service ke andar onTaskRemoved jodh dein taaki swipe karke hatane par bhi background me chalta rahe
+    public static class MehfKeepAliveService extends android.app.Service {
         @Override
         public int onStartCommand(Intent intent, int flags, int startId) {
-            try {
-                Intent openIntent = new Intent(this, MainActivity.class);
-                openIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-                int pFlags = PendingIntent.FLAG_UPDATE_CURRENT;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pFlags |= PendingIntent.FLAG_IMMUTABLE;
-                PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, openIntent, pFlags);
+            String channelId = "mehf_keep_alive_channel";
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(
+                        channelId,
+                        "MEHF 24x7 Background Service",
+                        NotificationManager.IMPORTANCE_LOW
+                );
+                NotificationManager manager = getSystemService(NotificationManager.class);
+                if (manager != null) manager.createNotificationChannel(channel);
+            }
 
-                Notification.Builder builder;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    builder = new Notification.Builder(this, SERVICE_CHANNEL_ID);
-                } else {
-                    builder = new Notification.Builder(this);
-                }
+            Notification notification = new NotificationCompat.Builder(this, channelId)
+                    .setContentTitle("Meh Foundation Active")
+                    .setContentText("24x7 SMS Gateway & Chat daemon running...")
+                    .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .build();
 
-                Notification notification = builder
-                        .setSmallIcon(android.R.drawable.sym_def_app_icon)
-                        .setContentTitle("Meh foundation Smart Hub Active")
-                        .setContentText("24x7 लाइव कॉल, नोटिस अलर्ट एवं ऑटो-SMS गेटवे चालू है")
-                        .setOngoing(true)
-                        .setContentIntent(pendingIntent)
-                        .build();
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                    startForeground(7701, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
-                } else {
-                    startForeground(7701, notification);
-                }
-            } catch (Exception ignored) {}
-            return START_STICKY;
+            startForeground(1001, notification);
+            return START_STICKY; // App ko restart rakhta hai agar OS kill kare
         }
 
         @Override
-        public IBinder onBind(Intent intent) {
+        public void onTaskRemoved(Intent rootIntent) {
+            super.onTaskRemoved(rootIntent);
+            // Jab user app ko recent apps se swipe karke hataye, tab bhi service ko restart karein
+            Intent restartServiceIntent = new Intent(getApplicationContext(), MehfKeepAliveService.class);
+            restartServiceIntent.setPackage(getPackageName());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(restartServiceIntent);
+            } else {
+                startService(restartServiceIntent);
+            }
+        }
+
+        @Override
+        public android.os.IBinder onBind(Intent intent) {
             return null;
         }
     }
