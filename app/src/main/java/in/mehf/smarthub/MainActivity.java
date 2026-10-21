@@ -340,7 +340,7 @@ public class MainActivity extends Activity {
                 "    sessionStorage.setItem('mehf_landed_chat_first', '1');" +
                 "  }" +
                 "" +
-                "  /* 1. Top Smart Toggle Button (Chat <-> Dashboard) & SMS Panel */" +
+               "  /* 1. Top Smart Toggle Button (Chat <-> Dashboard) - SMS Panel Removed */" +
                 "  if (effectiveId && path.indexOf('login.html') === -1 && !document.getElementById('mehfTopNavSwitcher')) {" +
                 "    const topBar = document.createElement('div');" +
                 "    topBar.id = 'mehfTopNavSwitcher';" +
@@ -356,15 +356,10 @@ public class MainActivity extends Activity {
                 "    let navHtml = isChatPage ? " +
                 "      \"<a href='\" + dashUrl + \"' id='mehfSwitchDashBtn' style='color:#fde68a;font-size:11px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:rgba(56,189,248,0.2);'>📊 डैशबोर्ड पर जाएं</a>\" :" +
                 "      \"<a href='/chat.html' style='color:#fde68a;font-size:11px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:rgba(56,189,248,0.2);'>💬 चैट पर जाएं</a>\";" +
-                "    if (effectiveRole === 'admin' || effectiveRole === 'school') {" +
-                "      navHtml += \"<span style='color:#475569;font-size:10px;'>|</span><button id='mehfOpenSmsModalBtn' style='background:rgba(34,197,94,0.2);color:#4ade80;border:1.5px solid #22c55e;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;cursor:pointer;'>📩 SMS पैनल (<span id='mehfSmsBadgeCount'>0</span>)</button>\";" +
-                "    }" +
                 "    topBar.innerHTML = navHtml;" +
                 "    document.body.appendChild(topBar);" +
                 "    const dBtn = document.getElementById('mehfSwitchDashBtn');" +
                 "    if (dBtn) { dBtn.addEventListener('click', function() { sessionStorage.setItem('mehf_landed_chat_first', '1'); }); }" +
-                "    const smsBtn = document.getElementById('mehfOpenSmsModalBtn');" +
-                "    if (smsBtn) { smsBtn.addEventListener('click', function() { if (window.__mehfToggleSmsManagerModal) window.__mehfToggleSmsManagerModal(); }); }" +
                 "  }" +
                 "" +
                 "  /* 2. Bottom Multi-Account Switcher (KEVAL Dashboard screen par dikhega, Chat par nahi) */" +
