@@ -1,4 +1,39 @@
-name: Generate Android Project Structure, Custom Icon & Gradle Wrapper
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Manual Android SDK & Build Tools Setup
+        run: |
+          mkdir -p $HOME/android-sdk/cmdline-tools
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O tools.zip
+          unzip -q tools.zip -d $HOME/android-sdk/cmdline-tools
+          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
+
+          echo "ANDROID_HOME=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$HOME/android-sdk" >> $GITHUB_ENV
+          echo "$HOME/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$HOME/android-sdk/platform-tools" >> $GITHUB_PATH
+
+          SDKMGR="$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager"
+          yes | $SDKMGR --licenses || true
+          $SDKMGR "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Generate Android Project Structure, Custom Icon & Gradle Wrapper
         run: |
           mkdir -p app/src/main/java/in/mehf/smarthub
           mkdir -p app/src/main/res/values
@@ -13,12 +48,6 @@ name: Generate Android Project Structure, Custom Icon & Gradle Wrapper
           if [ -f "MainActivity.java" ]; then
             cp MainActivity.java app/src/main/java/in/mehf/smarthub/MainActivity.java
           fi
-          
-          # FCM Service class copy karein agar banai hai
-          if [ -f "MyFirebaseMessagingService.java" ]; then
-            cp MyFirebaseMessagingService.java app/src/main/java/in/mehf/smarthub/MyFirebaseMessagingService.java
-          fi
-
           if [ -f "AndroidManifest.xml" ]; then
             cp AndroidManifest.xml app/src/main/AndroidManifest.xml
           fi
@@ -86,7 +115,7 @@ name: Generate Android Project Structure, Custom Icon & Gradle Wrapper
           include ':app'
           EOF
 
-          # 🔥 Root build.gradle mein Google Services plugin version joda gaya hai
+          # 🔥 Root build.gradle with Google Services plugin
           cat << 'GradleEOF' > build.gradle
           plugins {
               id 'com.android.application' version '8.2.2' apply false
@@ -94,7 +123,7 @@ name: Generate Android Project Structure, Custom Icon & Gradle Wrapper
           }
           GradleEOF
 
-          # 🔥 App-level build.gradle generate karein jisme FCM dependencies hongi
+          # 🔥 App-level build.gradle with Firebase Cloud Messaging dependencies
           mkdir -p app
           cat << 'AppBuildEOF' > app/build.gradle
           plugins {
@@ -146,3 +175,15 @@ name: Generate Android Project Structure, Custom Icon & Gradle Wrapper
               <string name="app_name">Meh foundation</string>
           </resources>
           EOF
+
+      - name: Build Debug APK via Gradle
+        run: |
+          gradle wrapper --gradle-version 8.4
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload Ready-to-Install APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meh-foundation-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
