@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace 'in.mehf.smarthub'
+    namespace 'com.mehf.smsgateway'
     compileSdk 34
 
     defaultConfig {
-        applicationId "in.mehf.smarthub"
+        applicationId "com.mehf.smsgateway"
         minSdk 23
         targetSdk 34
         versionCode 2
