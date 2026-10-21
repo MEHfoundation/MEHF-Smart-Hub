@@ -31,7 +31,11 @@ jobs:
 
           SDKMGR="$HOME/android-sdk/cmdline-tools/latest/bin/sdkmanager"
           yes | $SDKMGR --licenses || true
-          $SDKMGR "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          
+          # 🔥 Retry loop added to prevent zip extraction failure
+          for i in {1..3}; do
+            $SDKMGR "platform-tools" "platforms;android-34" "build-tools;34.0.0" && break || sleep 5
+          done
 
       - name: Generate Android Project Structure, Custom Icon & Gradle Wrapper
         run: |
