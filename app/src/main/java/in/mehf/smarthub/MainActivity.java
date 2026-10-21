@@ -1,5 +1,6 @@
 package in.mehf.smarthub;
 
+import android.content.BroadcastReceiver;
 import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
@@ -279,8 +280,11 @@ public class MainActivity extends Activity {
         } else if (currentUrl == null) {
             persistentWebView.loadUrl(LIVE_MEHF_START_URL);
         }
+        Agar phone reboot hone par app auto-start hua hai, toh WebView load karke background mein bhej dein
+        if (getIntent() != null && getIntent().getBooleanExtra("auto_boot", false)) {
+            moveTaskToBack(true);
+        }
     }
-
     // Simultaneous Multi-Account Realtime Listener + Top Switcher + Smart SMS Gateway Manager
     private void injectMultiAccountDaemonAndSmsMonitor(WebView view) {
         String js = "(function() {" +
@@ -761,7 +765,36 @@ public class MainActivity extends Activity {
             });
         }
     }
+// Phone Switch Off hokar On (Reboot) hone par App aur WebView ko 24x7 Auto-Start karne wala Receiver
+    public static class BootReceiver extends android.content.BroadcastReceiver {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (intent == null || intent.getAction() == null) return;
+            String action = intent.getAction();
 
+            if (Intent.ACTION_BOOT_COMPLETED.equals(action) ||
+                Intent.ACTION_LOCKED_BOOT_COMPLETED.equals(action) ||
+                "android.intent.action.QUICKBOOT_POWERON".equals(action) ||
+                "com.htc.intent.action.QUICKBOOT_POWERON".equals(action)) {
+
+                try {
+                    // 1. Keep-Alive Foreground Service turant chalu karein
+                    Intent serviceIntent = new Intent(context, MehfKeepAliveService.class);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(serviceIntent);
+                    } else {
+                        context.startService(serviceIntent);
+                    }
+
+                    // 2. MainActivity (persistentWebView + chat.html) ko background mode mein launch karein
+                    Intent activityIntent = new Intent(context, MainActivity.class);
+                    activityIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                    activityIntent.putExtra("auto_boot", true);
+                    context.startActivity(activityIntent);
+                } catch (Exception ignored) {}
+            }
+        }
+    }
     private void showHighPriorityNotification(String title, String body, int notifId, String channelId, String targetUrl) {
         try {
             NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
