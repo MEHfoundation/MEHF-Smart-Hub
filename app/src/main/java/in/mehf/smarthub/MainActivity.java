@@ -325,78 +325,78 @@ public class MainActivity extends Activity {
                 "  const redirects = { admin: '/admin-dashboard.html', school: '/school-dashboard.html', teacher: '/teacher-dashboard.html', student: '/student-dashboard.html', volunteer: '/volunteer-dashboard.html', driver: '/transport-dashboard.html' };" +
                 "" +
                 "  /* 1. Login check & Direct Redirect to chat.html after Login */" +
-                "  if (!effectiveId && path.indexOf('login.html') === -1) {" +
-                "    window.location.href = '/login.html';" +
-                "    return;" +
-                "  }" +
-                "  if (path.indexOf('login.html') !== -1) {" +
-                "    sessionStorage.removeItem('mehf_landed_chat_first');" +
-                "  } else if (effectiveId && path.indexOf('dashboard') !== -1 && !sessionStorage.getItem('mehf_landed_chat_first')) {" +
-                "    sessionStorage.setItem('mehf_landed_chat_first', '1');" +
-                "    window.location.replace('/chat.html');" +
-                "    return;" +
-                "  } else if (path.indexOf('chat.html') !== -1) {" +
-                "    sessionStorage.setItem('mehf_landed_chat_first', '1');" +
-                "  }" +
-                "" +
-                "  /* 2. Top Floating Switcher Bar (Switch Chat <-> Switch Dashboard <-> SMS Manager) */" +
-                "  if (effectiveId && path.indexOf('login.html') === -1 && !document.getElementById('mehfTopNavSwitcher')) {" +
-                "    const topBar = document.createElement('div');" +
-                "    topBar.id = 'mehfTopNavSwitcher';" +
-                "    topBar.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:999995;background:rgba(15,23,42,0.95);border:1.5px solid #38bdf8;border-radius:999px;padding:5px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 6px 20px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;white-space:nowrap;';" +
-                "    const isChatPage = path.indexOf('chat.html') !== -1;" +
-                "    const dashUrl = redirects[effectiveRole] || '/admin-dashboard.html';" +
-                "    let navHtml = `<a href='/chat.html' style='color:${isChatPage ? \"#fde68a\" : \"#94a3b8\"};font-size:12px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;background:${isChatPage ? \"rgba(56,189,248,0.2)\" : \"transparent\"};'>💬 चैट / लाइव</a>` +" +
-                "                  `<span style='color:#475569;font-size:11px;'>|</span>` +" +
-                "                  `<a href='${dashUrl}' id='mehfSwitchDashBtn' style='color:${!isChatPage ? \"#fde68a\" : \"#94a3b8\"};font-size:12px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 8px;border-radius:999px;background:${!isChatPage ? \"rgba(56,189,248,0.2)\" : \"transparent\"};'>📊 डैशबोर्ड</a>`;" +
-                "    if (effectiveRole === 'admin' || effectiveRole === 'school') {" +
-                "      navHtml += `<span style='color:#475569;font-size:11px;'>|</span>` +" +
-                "                 `<button id='mehfOpenSmsModalBtn' style='background:rgba(34,197,94,0.2);color:#4ade80;border:1px solid #22c55e;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:800;cursor:pointer;'>📩 SMS पैनल (<span id='mehfSmsBadgeCount'>0</span>)</button>`;" +
-                "    }" +
-                "    topBar.innerHTML = navHtml;" +
-                "    document.body.appendChild(topBar);" +
-                "    const dBtn = document.getElementById('mehfSwitchDashBtn');" +
-                "    if (dBtn) {" +
-                "      dBtn.addEventListener('click', function() {" +
-                "        sessionStorage.setItem('mehf_landed_chat_first', '1');" +
-                "      });" +
-                "    }" +
-                "    const smsBtn = document.getElementById('mehfOpenSmsModalBtn');" +
-                "    if (smsBtn) {" +
-                "      smsBtn.addEventListener('click', function() {" +
-                "        if (window.__mehfToggleSmsManagerModal) window.__mehfToggleSmsManagerModal();" +
-                "      });" +
-                "    }" +
-                "  }" +
-                "" +
-                "  /* 3. Bottom Multi-Account Switcher */" +
-                "  if (accs.length > 0 && path.indexOf('login.html') === -1 && !document.getElementById('mehfFloatingAccountSwitcher')) {" +
-                "    const bar = document.createElement('div');" +
-                "    bar.id = 'mehfFloatingAccountSwitcher';" +
-                "    bar.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:999990;background:rgba(15,23,42,0.95);border:1.5px solid #fbbf24;border-radius:999px;padding:5px 10px;display:flex;align-items:center;gap:6px;box-shadow:0 10px 25px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;';" +
-                "    let opts = accs.map(a => `<option value='${a.docId}' ${a.docId === effectiveId ? 'selected' : ''}>👤 ${a.name} (${a.role.toUpperCase()})</option>`).join('');" +
-                "    opts += `<option value='__ADD__'>➕ नया खाता जोड़ें...</option>`;" +
-                "    bar.innerHTML = `<span style='width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;'></span>` +" +
-                "                    `<select id='mehfGlobalAccSel' style='background:transparent;color:#fde68a;border:none;font-size:11px;font-weight:800;outline:none;max-width:155px;'>${opts}</select>`;" +
-                "    document.body.appendChild(bar);" +
-                "    document.getElementById('mehfGlobalAccSel').addEventListener('change', function() {" +
-                "      if (this.value === '__ADD__') { window.location.href = '/login.html?add=1'; return; }" +
-                "      const target = accs.find(a => a.docId === this.value);" +
-                "      if (target) {" +
-                "        localStorage.setItem('mehf_active_account_doc_id_v2', target.docId);" +
-                "        localStorage.setItem('loggedInUserDocId', target.docId);" +
-                "        localStorage.setItem('loggedInUserUsername', target.username);" +
-                "        localStorage.setItem('loggedInUserRole', target.role);" +
-                "        localStorage.setItem('loggedInUserName', target.name);" +
-                "        sessionStorage.setItem('loggedInUserDocId', target.docId);" +
-                "        sessionStorage.setItem('loggedInUserUsername', target.username);" +
-                "        sessionStorage.setItem('loggedInUserRole', target.role);" +
-                "        sessionStorage.setItem('loggedInUserName', target.name);" +
-                "        window.location.href = '/chat.html';" +
-                "      }" +
-                "    });" +
-                "  }" +
-                "" +
+                /* 2. Top Smart Toggle Button (Chat <-> Dashboard) & SMS Panel */
+  if (effectiveId && path.indexOf('login.html') === -1 && !document.getElementById('mehfTopNavSwitcher')) {
+    const topBar = document.createElement('div');
+    topBar.id = 'mehfTopNavSwitcher';
+    topBar.style.cssText = 'position:fixed;top:6px;left:50%;transform:translateX(-50%);z-index:999995;background:rgba(15,23,42,0.95);border:1.5px solid #38bdf8;border-radius:999px;padding:4px 12px;display:flex;align-items:center;gap:8px;box-shadow:0 6px 20px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;white-space:nowrap;';
+    
+    if (!document.getElementById('mehfBodyStylePatcher')) {
+      const bStyle = document.createElement('style');
+      bStyle.id = 'mehfBodyStylePatcher';
+      bStyle.innerHTML = 'body { padding-top: 52px !important; padding-bottom: 20px !important; }';
+      document.head.appendChild(bStyle);
+    }
+
+    const isChatPage = path.indexOf('chat.html') !== -1;
+    const dashUrl = redirects[effectiveRole] || '/admin-dashboard.html';
+    
+    let navHtml = '';
+    if (isChatPage) {
+      navHtml = `<a href='${dashUrl}' id='mehfSwitchDashBtn' style='color:#fde68a;font-size:11px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:rgba(56,189,248,0.2);'>📊 डैशबोर्ड पर जाएं</a>`;
+    } else {
+      navHtml = `<a href='/chat.html' style='color:#fde68a;font-size:11px;font-weight:800;text-decoration:none;display:flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:rgba(56,189,248,0.2);'>💬 चैट पर जाएं</a>`;
+    }
+
+    if (effectiveRole === 'admin' || effectiveRole === 'school') {
+      navHtml += `<span style='color:#475569;font-size:10px;'>|</span>` +
+                 `<button id='mehfOpenSmsModalBtn' style='background:rgba(34,197,94,0.2);color:#4ade80;border:1px solid #22c55e;border-radius:999px;padding:3px 8px;font-size:10px;font-weight:800;cursor:pointer;'>📩 SMS पैनल (<span id='mehfSmsBadgeCount'>0</span>)</button>`;
+    }
+    topBar.innerHTML = navHtml;
+    document.body.appendChild(topBar);
+
+    const dBtn = document.getElementById('mehfSwitchDashBtn');
+    if (dBtn) {
+      dBtn.addEventListener('click', function() {
+        sessionStorage.setItem('mehf_landed_chat_first', '1');
+      });
+    }
+    const smsBtn = document.getElementById('mehfOpenSmsModalBtn');
+    if (smsBtn) {
+      smsBtn.addEventListener('click', function() {
+        if (window.__mehfToggleSmsManagerModal) window.__mehfToggleSmsManagerModal();
+      });
+    }
+  }
+
+  /* 3. Bottom Multi-Account Switcher (KEVAL Dashboard screen par dikhega, Chat par nahi) */
+  if (accs.length > 0 && path.indexOf('login.html') === -1 && path.indexOf('chat.html') === -1 && !document.getElementById('mehfFloatingAccountSwitcher')) {
+    const bar = document.createElement('div');
+    bar.id = 'mehfFloatingAccountSwitcher';
+    bar.style.cssText = 'position:fixed;bottom:12px;right:12px;z-index:999990;background:rgba(15,23,42,0.95);border:1.5px solid #fbbf24;border-radius:999px;padding:4px 10px;display:flex;align-items:center;gap:6px;box-shadow:0 10px 25px rgba(0,0,0,0.5);backdrop-filter:blur(8px);font-family:sans-serif;';
+    let opts = accs.map(a => `<option value='${a.docId}' ${a.docId === effectiveId ? 'selected' : ''}>👤 ${a.name} (${a.role.toUpperCase()})</option>`).join('');
+    opts += `<option value='__ADD__'>➕ नया खाता...</option>`;
+    bar.innerHTML = `<span style='width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;'></span>` +
+                    `<select id='mehfGlobalAccSel' style='background:transparent;color:#fde68a;border:none;font-size:10px;font-weight:800;outline:none;max-width:130px;'>${opts}</select>`;
+    document.body.appendChild(bar);
+    
+    document.getElementById('mehfGlobalAccSel').addEventListener('change', function() {
+      if (this.value === '__ADD__') { window.location.href = '/login.html?add=1'; return; }
+      const target = accs.find(a => a.docId === this.value);
+      if (target) {
+        localStorage.setItem('mehf_active_account_doc_id_v2', target.docId);
+        localStorage.setItem('loggedInUserDocId', target.docId);
+        localStorage.setItem('loggedInUserUsername', target.username);
+        localStorage.setItem('loggedInUserRole', target.role);
+        localStorage.setItem('loggedInUserName', target.name);
+        sessionStorage.setItem('loggedInUserDocId', target.docId);
+        sessionStorage.setItem('loggedInUserUsername', target.username);
+        sessionStorage.setItem('loggedInUserRole', target.role);
+        sessionStorage.setItem('loggedInUserName', target.name);
+        window.location.href = '/chat.html';
+      }
+    });
+  }                "" +
                 "  if (window.__mehfMultiAccountDaemonRunning) return;" +
                 "  window.__mehfMultiAccountDaemonRunning = true;" +
                 "" +
