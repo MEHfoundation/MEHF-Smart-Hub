@@ -1,4 +1,4 @@
-package in.mehf.smarthub;
+package com.mehf.smsgateway;
 
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -86,7 +86,7 @@ public class MyFirebaseMessagingService extends FirebaseMessagingService {
     }
 
     @Override
-    public onNewToken(String token) {
+    public void onNewToken(String token) {
         super.onNewToken(token);
         // Token update hone par yahan handle kiya ja sakta hai
     }
