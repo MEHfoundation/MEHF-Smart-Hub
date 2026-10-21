@@ -796,9 +796,16 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {}
     }
 
+    // Modern Dual-SIM & Specific SubId SMS Dispatcher Bridge
     public class NativeSmsGatewayBridge {
         @JavascriptInterface
         public String sendDirectSms(String phoneNumber, String messageBody) {
+            return sendSmsWithSubscription(phoneNumber, messageBody, -1);
+        }
+
+        @JavascriptInterface
+        public String sendDirectSmsWithSim(String phoneNumber, String messageBody, int simSlotIndex) {
+            // simSlotIndex: 0 for SIM 1, 1 for SIM 2, or -1 for default
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
@@ -823,16 +830,39 @@ public class MainActivity extends Activity {
                 String finalAddress = "+91" + digitsOnly;
 
                 SmsManager smsManager = null;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    smsManager = getApplicationContext().getSystemService(SmsManager.class);
-                }
-                if (smsManager == null) {
-                    int subId = SubscriptionManager.getDefaultSmsSubscriptionId();
-                    if (subId != SubscriptionManager.INVALID_SUBSCRIPTION_ID) {
-                        smsManager = SmsManager.getSmsManagerForSubscriptionId(subId);
-                    } else {
-                        smsManager = SmsManager.getDefault();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+                    SubscriptionManager subManager = (SubscriptionManager) getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE);
+                    if (subManager != null) {
+                        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
+                            List<android.telephony.SubscriptionInfo> subList = subManager.getActiveSubscriptionInfoList();
+                            if (subList != null && !subList.isEmpty()) {
+                                // Find subscription info by slot index if specified
+                                android.telephony.SubscriptionInfo targetSub = null;
+                                for (android.telephony.SubscriptionInfo info : subList) {
+                                    if (simSlotIndex >= 0 && info.getSimSlotIndex() == simSlotIndex) {
+                                       targetSub = info;
+                                       break;
+                                    }
+                                }
+                                if (targetSub == null) {
+                                    targetSub = subList.get(0); // Fallback to first available active SIM
+                                }
+                                int subId = targetSub.getSubscriptionId();
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                    smsManager = getApplicationContext().createContextForUser(android.os.Process.myUserHandle()).getSystemService(SmsManager.class);
+                                    if (smsManager != null) {
+                                        smsManager = smsManager.createForSubscriptionId(subId);
+                                    }
+                                } else {
+                                    smsManager = SmsManager.getSmsManagerForSubscriptionId(subId);
+                                }
+                            }
+                        }
                     }
+                }
+
+                if (smsManager == null) {
+                    smsManager = SmsManager.getDefault();
                 }
 
                 int pFlags = PendingIntent.FLAG_UPDATE_CURRENT;
@@ -852,10 +882,14 @@ public class MainActivity extends Activity {
                     }
                     smsManager.sendMultipartTextMessage(finalAddress, null, parts, sentIntents, null);
                 }
-                return "SENT";
+                return "SENT (SIM Slot: " + (simSlotIndex >= 0 ? simSlotIndex + 1 : "Default") + ")";
             } catch (Exception e) {
                 return "ERROR: " + e.getMessage();
             }
+        }
+
+        private String sendSmsWithSubscription(String phone, String msg, int slot) {
+            return sendDirectSmsWithSim(phone, msg, slot);
         }
     }
 
